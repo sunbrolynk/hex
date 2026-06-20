@@ -58,7 +58,8 @@ The whole reason HEx exists.
 - ⬜ **Invite** — capability links: single-use, expiring, rate-limited, unguessable
 - ⬜ **Accept / signup** — guided wizard via Authentik enrollment
 - ⬜ **Provision** — fail-secure, idempotent, precise partial-failure handling
-- ⬜ **Dashboard** — personalized per user, strictly scoped
+- ⬜ **Dashboard** — personalized, **configurable** dashboard (curated widgets + drag/drop layout
+  + theming), strictly per-user-scoped
 - ⬜ **Request more** — self-service requests gated by owner approval
 - ⬜ **Offboard** — remove a user *everywhere* in one action, with drift reconciliation
 
@@ -91,7 +92,9 @@ Proving the contract against reality — the v1 bar.
 - ⬜ **Game servers** — onboard users onto the owner's game servers (Minecraft/Steam allowlists,
   panels); play-access vs management-access as separate grants — see `docs/GAME_SERVERS.md`
 - ⬜ **Android app** — a separate, open client (auth + dashboard first)
-- ⬜ Dashboard polish, theming, and richer per-service widgets
+- ⬜ **Full dashboard builder** — extensive GUI configuration for non-tech users + a power-user
+  code/CSS mode, behind a hardened builder security model (CSP, sanitization, no arbitrary JS,
+  CSS/iframe sandboxing, per-user isolation)
 - ⬜ More deployment targets (LXC, VM, native per-OS)
 
 ---

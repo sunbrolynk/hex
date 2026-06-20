@@ -136,13 +136,23 @@ store of record.
    secrets broker, calls fail-secure.
 5. **HEx ↔ Authentik:** scoped service-account token; the most sensitive integration.
 
-## Why the dashboard is intentionally minimal in v1
+## The dashboard: rich, per-user, and access-governed
 
-The dashboard is commodity and can be made beautiful later. Building it first risks
-shipping a Homepage clone and stalling before the differentiating work. v1 proves the
-**whole lifecycle arc** against a small provider set chosen to exercise **all four
-integration modes** (see LIFECYCLE and `docs/decisions/0003`). Once the contract survives
-all four modes end to end, breadth is just writing more providers against a proven spine.
+HEx is still not a standalone dashboard tool — but the distinction from Homepage/Homarr/Dashy
+is **governed + per-user**, not "minimal." Each user's dashboard is driven by the ledger: they
+see and configure only what they have been granted, and it is offboardable in one action. That
+governance is the line, so a rich dashboard does not contradict "not another dashboard."
+
+Delivered in phases (see `docs/decisions/0014`): v1 ships a curated-but-rich personalized
+dashboard — curated widgets, basic drag/drop layout, theming, no user-authored code/CSS yet —
+architected toward a full builder. Post-v1 adds a GUI builder for non-technical users and a
+power-user code/CSS mode behind a hardened builder security model (CSP, allowlist
+sanitization, no arbitrary JS, CSS/iframe sandboxing, server-side validation, per-user
+isolation).
+
+v1 still proves the **whole lifecycle arc** against a small provider set chosen to exercise
+**all four integration modes** (see LIFECYCLE and `docs/decisions/0003`); breadth is just
+writing more providers against a proven spine.
 
 ## Deployment shape
 

@@ -67,9 +67,11 @@ tier, no project-run servers. Every build is identical for everyone, however you
 
 ## Not another dashboard
 
-The ecosystem already nails the pieces HEx deliberately *won't* rebuild — dashboards (Homepage,
-Homarr, Dashy) and media-onboarding wizards (Wizarr). HEx's own dashboard is intentionally
-minimal. The unclaimed ground is the **cohesive, generalized lifecycle** — onboard → request →
+HEx doesn't try to be a standalone dashboard tool (Homepage, Homarr, Dashy) or a media-onboarding
+wizard (Wizarr). But every user *does* get a **rich, configurable, personalized** dashboard —
+widgets, drag/drop layout, theming, and later a power-user code/CSS mode — that's **governed by the
+lifecycle**: they see and configure only what you've granted them, and it's removed the moment you
+offboard them. The unclaimed ground is the **cohesive, generalized lifecycle** — onboard → request →
 personalized experience → **offboard** — across *arbitrary* services, driven through your identity
 provider.
 

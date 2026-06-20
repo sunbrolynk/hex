@@ -1,6 +1,6 @@
 # 0003 — The full lifecycle arc is v1 scope (depth-first)
 
-- Status: **Accepted**
+- Status: **Accepted** (dashboard scope amended by 0014)
 - Date: project inception
 
 ## Context
@@ -22,7 +22,8 @@ that **all four integration modes are exercised end to end**:
 - `external_invite` — Plex,
 - `manual` — a service with no enrollment API.
 
-The dashboard is intentionally minimal in v1.
+v1 ships a curated-but-rich personalized dashboard (no user code/CSS yet); the full
+configurable builder is a first-class post-v1 feature — see ADR 0014.
 
 ## Consequences
 
