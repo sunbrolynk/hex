@@ -1,0 +1,80 @@
+# REFERENCE ONLY — not runnable as-is. See docs/ci/README.md.
+# Tag-triggered release: build image, generate SBOM, keyless-sign with cosign,
+# attach SLSA provenance + SBOM attestations, publish to GHCR.
+# Pin every action to a full commit SHA before using.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+jobs:
+  build-sign-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write        # push to GHCR
+      id-token: write        # OIDC for cosign keyless + provenance
+    steps:
+      - uses: actions/checkout@<sha>
+
+      - name: Log in to GHCR
+        uses: docker/login-action@<sha>
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push (by digest)
+        id: build
+        uses: docker/build-push-action@<sha>
+        with:
+          push: true
+          tags: ghcr.io/<org>/hex:${{ github.ref_name }}
+          # capture the digest for signing/attesting by immutable reference
+          provenance: false
+
+      - name: Generate SBOM (CycloneDX + SPDX)
+        uses: anchore/sbom-action@<sha>     # Syft under the hood
+        with:
+          image: ghcr.io/<org>/hex@${{ steps.build.outputs.digest }}
+          output-file: sbom.cdx.json
+          format: cyclonedx-json
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@<sha>
+
+      - name: Keyless sign image (by digest)
+        run: |
+          cosign sign --yes \
+            ghcr.io/<org>/hex@${{ steps.build.outputs.digest }}
+        # No keys: GitHub OIDC -> Fulcio short-lived cert -> Rekor transparency log.
+
+      - name: Attest SBOM
+        run: |
+          cosign attest --yes \
+            --predicate sbom.cdx.json \
+            --type cyclonedx \
+            ghcr.io/<org>/hex@${{ steps.build.outputs.digest }}
+
+  # SLSA build provenance via the reusable generator (separates build from provenance).
+  provenance:
+    needs: build-sign-publish
+    permissions:
+      actions: read
+      id-token: write
+      packages: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@<sha>
+    with:
+      image: ghcr.io/<org>/hex
+      # digest wired from the build job output in the real workflow
+
+# Deployer verification (document in README):
+#   cosign verify ghcr.io/<org>/hex@<digest> \
+#     --certificate-identity-regexp '^https://github\.com/<org>/hex/\.github/workflows/release\.yml@refs/tags/.+$' \
+#     --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
+#   cosign verify-attestation ... --type cyclonedx ...
+#   cosign verify-attestation ... --type slsaprovenance ...

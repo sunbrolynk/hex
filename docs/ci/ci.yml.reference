@@ -1,0 +1,104 @@
+# REFERENCE ONLY — not runnable as-is. See docs/ci/README.md.
+# PR/push checks: lint, type-check, tests+coverage, dependency & secret scanning.
+# Pin every action to a full commit SHA before using (shown here as @<sha> placeholders).
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege by default; grant per-job only.
+permissions: {}
+
+jobs:
+  lint-type-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@<sha>            # pin to a commit SHA, not a tag
+      - uses: actions/setup-python@<sha>
+        with:
+          python-version: "3.12"
+      # Install from a hash-pinned lockfile for reproducible, verifiable deps.
+      - name: Install (hash-locked)
+        run: |
+          pip install --require-hashes -r requirements.lock
+      - name: Lint (zero warnings)
+        run: ruff check .
+      - name: Type check
+        run: mypy .
+      - name: Tests + coverage gate
+        run: |
+          pytest --cov --cov-report=xml \
+                 --cov-fail-under=80
+          # Security-critical modules are additionally gated at 95% via tooling config.
+
+  dependency-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@<sha>
+      - name: Python dependency audit
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.lock   # fail on known vulns (documented exceptions only)
+      # Optionally also osv-scanner for cross-ecosystem coverage.
+
+  frontend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@<sha>
+      - uses: actions/setup-node@<sha>
+        with:
+          node-version: "22"
+      - name: Install (locked)
+        run: npm ci            # committed lockfile; reproducible install
+      - name: Lint (zero warnings)
+        run: npm run lint
+      - name: Type check
+        run: npm run typecheck
+      - name: Unit/component tests + coverage gate (Vitest + RTL + MSW)
+        run: npm run test:unit -- --coverage   # coverage ratchets; never silently drops
+      - name: E2E lifecycle flows (Playwright)
+        run: npm run test:e2e   # invite→provision→dashboard→request→offboard
+      - name: Visual regression
+        run: npm run test:visual  # snapshot diffs must be reviewed/approved, not auto-accepted
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@<sha>
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@<sha>   # a detected secret fails the build
+
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@<sha>
+      - uses: github/codeql-action/init@<sha>
+        with:
+          languages: python, javascript
+      - uses: github/codeql-action/analyze@<sha>
+
+  # Mutation testing on security-critical modules. Heavy, so run on a schedule and on
+  # changes to those modules rather than every PR. A surviving mutant there is a defect.
+  # (Reference only — wire the schedule/path-filter in the real workflow.)
+  #   mutation-security:
+  #     runs-on: ubuntu-latest
+  #     steps:
+  #       - uses: actions/checkout@<sha>
+  #       - run: mutmut run --paths-to-mutate hex/security,hex/auth,hex/provisioning   # Python
+  #       - run: npx stryker run                                                       # JS/TS
