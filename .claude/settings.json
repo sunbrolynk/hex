@@ -53,5 +53,30 @@
       "Bash(wget:*)",
       "Bash(sudo:*)"
     ]
+  },
+  "hooks": {
+    "$comment": "PostToolUse wires the auto-check after edits. Stop/Notification ping Gotify via notify.sh. Hooks run as direct commands and are NOT subject to the Bash permission rules above, so notify.sh can curl even though the agent's curl is denied.",
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-check.sh" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/notify.sh" }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/notify.sh" }
+        ]
+      }
+    ]
   }
 }
