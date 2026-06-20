@@ -14,7 +14,7 @@
 ---
 
 HEx is the **front door to your self-hosted world**. Invite a friend or family member, and HEx
-creates their accounts across the services you choose, drops them on a dashboard that's *theirs*,
+sets up their access across the services you choose, drops them on a dashboard that's *theirs*,
 lets them request more access (with your approval), and — when the time comes — **cleanly removes
 them from everything at once.**
 
@@ -30,8 +30,8 @@ The dashboard is the face. The **lifecycle orchestration is the product.**
 
 If you run a homelab for more than just yourself, you know the friction:
 
-- **Onboarding** someone means hand-creating accounts across Jellyfin, Plex, the *arr apps,
-  Seerr, wikis, dashboards… one panel at a time.
+- **Onboarding** someone means setting up access across Jellyfin, Plex, Seerr, a game
+  server, a shared wiki… one panel at a time — every app its own silo.
 - Everyone ends up with **all-or-nothing** access, because fine-grained is too much manual work.
 - And when someone should **lose** access? You're hunting through a dozen admin pages, hoping
   you didn't miss one — leaving a door open you forgot about.
@@ -43,8 +43,8 @@ reliable action** — the part almost nobody else does well.
 
 🧩 **Every service is a "provider."** HEx models each app by *how* it grants access **and** *who
 owns the user account* — the two questions that, kept separate, make correct offboarding actually
-possible (revoke a Plex share vs. delete a Jellyfin user vs. drop an Authentik group). New
-services plug into one contract.
+possible (revoke a Plex share or a game-server allowlist entry, delete a Jellyfin user, drop an
+Authentik group). New services plug into one contract.
 
 🔑 **Identity done right — Authentik, bundled *or* bring-your-own.** HEx never reinvents auth. It
 ships and orchestrates [Authentik](https://goauthentik.io) so a single command brings everything

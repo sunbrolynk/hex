@@ -88,6 +88,8 @@ Proving the contract against reality — the v1 bar.
 ## Beyond v1
 
 - ⬜ **Breadth** — more providers against the proven contract (Seerr, Mealie, Audiobookshelf, …)
+- ⬜ **Game servers** — onboard users onto the owner's game servers (Minecraft/Steam allowlists,
+  panels); play-access vs management-access as separate grants — see `docs/GAME_SERVERS.md`
 - ⬜ **Android app** — a separate, open client (auth + dashboard first)
 - ⬜ Dashboard polish, theming, and richer per-service widgets
 - ⬜ More deployment targets (LXC, VM, native per-OS)

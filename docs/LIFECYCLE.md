@@ -112,7 +112,7 @@ See PROVIDER_CONTRACT for the ledger shape. Two lifecycle-critical behaviors:
 
 Pick a minimal set that forces every mode to be real before the contract calcifies:
 
-- `sso_group` — one *arr app (or similar) behind Authentik forward-auth.
+- `sso_group` — a multi-user app behind Authentik SSO (e.g. Grafana, a wiki, or Mealie).
 - `api_local` — Jellyfin.
 - `external_invite` — Plex.
 - `manual` — any service with no enrollment API (owner-authored steps).
