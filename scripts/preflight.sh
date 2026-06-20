@@ -20,6 +20,10 @@ run uv run mypy
 run uv run pyright
 run uv run pytest
 
+echo "== backend: security-critical coverage (hex/secrets >= 95%) =="
+# grep guards against a silent no-op if the include glob ever matches zero files.
+run bash -c "set -o pipefail; uv run coverage report --include='*/hex/secrets/*' --fail-under=95 | grep 'hex/secrets'"
+
 echo "== backend: dependency audit (mirrors CI dependency-scan) =="
 run bash -c 'uv export --frozen --no-dev --no-emit-project --format requirements-txt -o /tmp/hex-reqs.txt && uvx pip-audit -r /tmp/hex-reqs.txt'
 

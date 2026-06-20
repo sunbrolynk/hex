@@ -33,7 +33,11 @@ jobs:
         run: uv run pyright
       - name: Tests + coverage gate
         run: uv run pytest --cov-report=xml   # --cov/--cov-fail-under come from pyproject addopts
-        # Security-critical modules additionally gated at 95% once they land.
+      - name: Security-critical coverage gate (hex/secrets >= 95%)
+        # grep guards against a silent no-op if the include glob ever matches zero files.
+        run: |
+          set -o pipefail
+          uv run coverage report --include='*/hex/secrets/*' --fail-under=95 | grep 'hex/secrets'
 
   frontend:
     runs-on: ubuntu-latest

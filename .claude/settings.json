@@ -40,7 +40,6 @@
       "Read(./.env.production)",
       "Read(./.env.development)",
       "Read(./secrets/**)",
-      "Read(./**/secrets/**)",
       "Edit(./.env)",
       "Edit(./.env.local)",
       "Edit(./.env.production)",

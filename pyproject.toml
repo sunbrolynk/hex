@@ -8,6 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    "cryptography==49.0.0",
 ]
 
 [dependency-groups]
@@ -37,7 +38,10 @@ target-version = "py312"
 select = ["E", "W", "F", "I", "B", "UP", "ASYNC", "S"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]  # asserts are the point in tests
+# asserts + hardcoded placeholder/secret literals are expected in tests
+"tests/**" = ["S101", "S105", "S106", "S107"]
+# _RULES carries long, unsplittable secret-generation command literals
+"src/hex/secrets/validation.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"

@@ -37,4 +37,4 @@ RUN useradd --system --uid 10001 --no-create-home hex \
 USER hex
 
 EXPOSE 8000
-CMD ["uvicorn", "hex.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "hex.api.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

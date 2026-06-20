@@ -6,7 +6,8 @@
 *.key
 *.p12
 *.pfx
-secrets/
+# root-level secret MATERIAL only — NOT the src/hex/secrets/ source package
+/secrets/
 *-secret*
 *.kek
 
