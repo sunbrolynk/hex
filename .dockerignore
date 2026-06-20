@@ -1,0 +1,21 @@
+# Keep the build context small and reproducible (context is the repo root).
+.git
+.github
+.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+coverage.xml
+htmlcov
+**/node_modules
+frontend/dist
+frontend/coverage
+docs
+*.md
+.env
+.env.*
+!.env.example
+.claude

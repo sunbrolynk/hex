@@ -1,117 +1,117 @@
+<div align="center">
+
 # HEx — The Homelab Experience
 
-> The website that *is* your homelab. An access-orchestration and experience layer that
-> onboards, governs, and offboards users across your self-hosted services — driven by
-> Authentik, with a personalized dashboard as its face.
+### Turn an invite into real, governed access across your entire homelab — and revoke it everywhere in one click.
 
-**Status:** pre-alpha / design. Not yet released.
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![Status: early development](https://img.shields.io/badge/status-early%20development-orange.svg)](ROADMAP.md)
+[![Self-hosted](https://img.shields.io/badge/self--hosted-%E2%9D%A4-d7263d.svg)](#)
+[![Telemetry: none](https://img.shields.io/badge/telemetry-none-2ea043.svg)](docs/TRANSPARENCY.md)
+
+</div>
 
 ---
 
-## What HEx is
+HEx is the **front door to your self-hosted world**. Invite a friend or family member, and HEx
+creates their accounts across the services you choose, drops them on a dashboard that's *theirs*,
+lets them request more access (with your approval), and — when the time comes — **cleanly removes
+them from everything at once.**
 
-HEx turns inviting someone to a homelab into real, governed accounts and permissions
-across every service — and, just as importantly, can cleanly remove them everywhere when
-they leave. A new user follows an invite link into a guided wizard, gets provisioned into
-their default services, lands on a personalized dashboard, can self-serve requests for more
-access (gated by owner approval), and can be offboarded across the whole lab in one action.
-
-The dashboard is the surface. The **lifecycle orchestration** is the product:
+The dashboard is the face. The **lifecycle orchestration is the product.**
 
 ```
-INVITE → ACCEPT/SIGNUP → PROVISION → DASHBOARD → REQUEST MORE → OFFBOARD
+   INVITE  →  ACCEPT  →  PROVISION  →  DASHBOARD  →  REQUEST MORE  →  OFFBOARD
+  (you)      (capability   (across       (personal     (you approve)    (everywhere,
+              link)         services)     to them)                       one action)
 ```
 
-## What HEx is *not*, and how it relates to existing tools
+## Why HEx?
 
-The self-hosted ecosystem already solves pieces of this, and HEx deliberately does not
-rebuild them:
+If you run a homelab for more than just yourself, you know the friction:
 
-- **Dashboards** (Homepage, Homarr, Dashy, Heimdall) — mature and plentiful. HEx's
-  dashboard is intentionally minimal; it is not the value.
-- **Media onboarding wizards** (Wizarr) — already excellent at invite → provision for media
-  servers (Plex, Jellyfin, Emby, Audiobookshelf, and more). HEx generalizes the *whole*
-  lifecycle past media servers and through an identity provider.
-- **Identity** (Authentik) — HEx does **not** reimplement auth. Authentik is the source of
-  truth; HEx orchestrates it.
+- **Onboarding** someone means hand-creating accounts across Jellyfin, Plex, the *arr apps,
+  Seerr, wikis, dashboards… one panel at a time.
+- Everyone ends up with **all-or-nothing** access, because fine-grained is too much manual work.
+- And when someone should **lose** access? You're hunting through a dozen admin pages, hoping
+  you didn't miss one — leaving a door open you forgot about.
 
-The unclaimed ground HEx occupies is the **cohesive, generalized lifecycle arc** — onboard
-→ request → personalized experience → **offboard** — across arbitrary self-hosted services,
-each modeled as a pluggable provider, with security and supply-chain integrity treated as
-core requirements.
+HEx makes onboarding *one link*, access a *governed decision*, and **offboarding a single,
+reliable action** — the part almost nobody else does well.
 
-## Core design commitments
+## What makes HEx different
 
-- **Authentik is the identity source of truth.** HEx does **not** reimplement auth.
-  Authentik is **bundled and required** — one command rolls HEx and Authentik together, and
-  first run is a guided setup, not a crash. (ADR 0001 + 0010, `docs/DEPLOYMENT.md`,
-  `docs/BOOTSTRAP.md`)
-- **Every service is a provider** with two orthogonal axes — *how* it provisions and *who*
-  owns the identity — which is what makes correct offboarding possible. (ADR 0002,
-  `docs/PROVIDER_CONTRACT.md`)
-- **The full lifecycle arc, including offboarding, is v1.** (ADR 0003)
-- **Security and supply chain are core mission, from commit one.** OWASP ASVS 5.0 (L3 core,
-  L2 elsewhere); signed, provenance-attested, SBOM-bearing releases. (ADR 0004,
-  `docs/THREAT_MODEL.md`, `docs/SECURITY_MODEL.md`, `docs/SUPPLY_CHAIN.md`)
-- **No usable secret ships, ever; the app refuses to boot insecure.** (ADR 0005,
-  `docs/SECRETS.md`)
-- **Open and no phone-home.** The code and full security model are public; HEx makes no
-  outbound connections except to the systems you configure — no telemetry, no analytics,
-  no exfiltration of your data. Auditable like the *arr stack. (ADR 0006,
-  `docs/TRANSPARENCY.md`)
-- **Strict, regression-first testing from commit one**, backend and frontend. (ADR 0007,
-  `docs/TESTING.md`)
-- **One minimal, tightly-bounded break-glass owner login** for when Authentik is
-  unreachable — disabled by default, condition-gated, MFA, loudly audited. Normal login is
-  pure Authentik OIDC. (ADR 0008)
-- **Free, open, and never gated.** Nothing is withheld or locked; every build is functionally
-  identical for everyone. Available via sideload and an official Google Play build. No nags, no
-  dark patterns, no analytics, no project-run service. (ADR 0012)
+🧩 **Every service is a "provider."** HEx models each app by *how* it grants access **and** *who
+owns the user account* — the two questions that, kept separate, make correct offboarding actually
+possible (revoke a Plex share vs. delete a Jellyfin user vs. drop an Authentik group). New
+services plug into one contract.
 
-The Android app is a separate, public, OSS repo and a client of this API; see
-`docs/ANDROID.md`.
+🔑 **Identity done right — Authentik, bundled *or* bring-your-own.** HEx never reinvents auth. It
+ships and orchestrates [Authentik](https://goauthentik.io) so a single command brings everything
+up and first run is a guided setup — *or*, if you already run Authentik, point HEx at your
+existing instance. Your call.
 
-## Tech stack (assumed; see CLAUDE.md)
+🧹 **Offboarding is a first-class feature.** "Remove this person everywhere" is the hardest and
+most valuable operation in shared self-hosting, and it's built into the core — not bolted on.
 
-FastAPI · PostgreSQL · React 19 · Authentik (OIDC + API) · Argon2id · Docker/GHCR.
+🛡️ **Security is the mission, not a checkbox.** HEx is the most privileged box in your lab, and
+it's designed that way from commit one: least-privilege everywhere, fail-secure provisioning, an
+append-only audit trail, capability-based invite links, and signed, provenance-attested releases.
 
-## Documentation
+🔍 **Open and quiet.** The code and the *entire* security model are public. HEx makes **zero**
+outbound connections except to the systems you configure — no telemetry, no analytics, no
+phone-home, no harvesting your data. Auditable like the *arr stack.
 
-| Doc | What it covers |
-|---|---|
-| `CLAUDE.md` | Operating manual + non-negotiables (read first) |
-| `docs/ARCHITECTURE.md` | System shape, Authentik-as-SoT, components, trust boundaries |
-| `docs/PROVIDER_CONTRACT.md` | **The spine** — four modes, two axes, grants, ledger |
-| `docs/LIFECYCLE.md` | The arc, approval workflow, reconciliation, offboarding |
-| `docs/DEPLOYMENT.md` | The bundled stack (HEx + Authentik); one compose rolls both |
-| `docs/BOOTSTRAP.md` | First-run guided setup and its security |
-| `docs/THREAT_MODEL.md` | STRIDE threat model |
-| `docs/SECURITY_MODEL.md` | Concrete crypto, token validation, header-trust, authz, audit |
-| `docs/SECRETS.md` | Secret generation, envelope encryption, refuse-to-boot |
-| `docs/SUPPLY_CHAIN.md` | SLSA, cosign, SBOM, pinning, scanning |
-| `docs/TRANSPARENCY.md` | Open-source posture, no phone-home, what's open vs. closed and why |
-| `docs/TESTING.md` | Strict, regression-first testing strategy (front + back) |
-| `docs/WORKFLOW.md` | Delivery cadence + Claude Code gating (vertical slices, checkpoints) |
-| `docs/BREAK_GLASS.md` | Emergency-access design + operational runbook |
-| `CONVENTIONS.md` | Code style: docstrings, comments, naming, small-file discipline |
-| `docs/FILE_ARCHITECTURE.md` | Directory layout + proposed HEx tree |
-| `docs/ANDROID.md` | Foundation for the separate Android client repo |
-| `.claude/` | Committed Claude Code permission rules + hook template |
-| `docs/decisions/` | Locked architectural decisions (ADRs) |
-| `SECURITY.md` | Vulnerability disclosure |
-| `CONTRIBUTING.md` | Dev workflow + quality/security gates |
+🎁 **Free, forever, for everyone.** Nothing is gated, locked, or upsold. No nag screens, no "pro"
+tier, no project-run servers. Every build is identical for everyone, however you install it.
 
-## Verifying releases (planned)
+## Not another dashboard
 
-Released images will be keyless-signed with cosign and carry SLSA provenance and an SBOM,
-all verifiable from the public Rekor transparency log. A `cosign verify` snippet will live
-here so you can confirm the image you run came from this pipeline, unmodified, before
-deploying. See `docs/SUPPLY_CHAIN.md`.
+The ecosystem already nails the pieces HEx deliberately *won't* rebuild — dashboards (Homepage,
+Homarr, Dashy) and media-onboarding wizards (Wizarr). HEx's own dashboard is intentionally
+minimal. The unclaimed ground is the **cohesive, generalized lifecycle** — onboard → request →
+personalized experience → **offboard** — across *arbitrary* services, driven through your identity
+provider.
+
+## 🚧 Project status
+
+**Early development — built in the open.** HEx isn't ready to run yet; we're laying the
+foundation slice by slice, with every step reviewable.
+
+➡️ **See the [Roadmap](ROADMAP.md)** for the plan and exactly where we are today.
+
+⭐ **Star** and **watch** the repo to follow along as it comes together.
+
+## Built on
+
+[FastAPI](https://fastapi.tiangolo.com) · [React 19](https://react.dev) · PostgreSQL ·
+[Authentik](https://goauthentik.io) · Docker — open standards, no lock-in.
+
+## For the curious & contributors
+
+HEx is documented in depth. Good starting points:
+
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the system shape and the one decision
+  everything hangs off.
+- **[docs/PROVIDER_CONTRACT.md](docs/PROVIDER_CONTRACT.md)** — the spine: how any service plugs in.
+- **[docs/LIFECYCLE.md](docs/LIFECYCLE.md)** — the full arc, end to end.
+- **[docs/TRANSPARENCY.md](docs/TRANSPARENCY.md)** — our open / no-phone-home posture, in detail.
+- **[docs/decisions/](docs/decisions/)** — the architectural decisions and *why* they were made.
+
+Contributions and security reports are welcome even at this early stage — see
+**[CONTRIBUTING.md](CONTRIBUTING.md)** and **[SECURITY.md](SECURITY.md)**.
 
 ## License
 
-**AGPL-3.0.** Strong copyleft that also covers running a modified version as a network
-service: anyone who hosts a modified HEx must release their changes under the same license.
-This keeps HEx fully open source while preventing closed/proprietary forks. The copyright
-holder retains the option to dual-license. The Android client (separate repo) may carry the
-same license or a permissive one (e.g. Apache-2.0).
+**[AGPL-3.0](LICENSE).** Strong copyleft that also covers running a modified version as a network
+service — anyone who hosts a modified HEx must share their changes under the same license. This
+keeps HEx, and everything built on it, open.
+
+## Credits
+
+HEx stands on the shoulders of [Authentik](https://goauthentik.io) and the broader self-hosted and
+*arr communities. Full dependency and upstream attribution lives in the app's About page.
+
+<div align="center">
+<sub>Built for people who host things for the people they care about.</sub>
+</div>

@@ -4,6 +4,12 @@ The first time the stack comes up, HEx must **not** crash on everything that isn
 configured yet. Instead it detects first run, enters a secured **bootstrap mode**, finishes
 wiring Authentik for the owner, hardens, and then moves into HEx owner setup. See ADR 0010.
 
+**`HEX_AUTHENTIK_MODE` (`bundled` | `external`, default `bundled`)** selects how Authentik
+is provided (ADR 0013). The flow below is identical in both modes; only the "wait for
+Authentik" step differs — bundled self-seeds and waits for its own stack; external validates
+connectivity to the deployer's Authentik. Either way, the first-run page gates the app until
+Authentik is reachable.
+
 ## State machine
 
 ```
@@ -12,8 +18,11 @@ wiring Authentik for the owner, hardens, and then moves into HEx owner setup. Se
         ▼
   BOOTSTRAP MODE  ── secured setup surface only; the full app is NOT running ──┐
         │                                                                       │
-        │  1. Wait for Authentik to be healthy (it self-seeds from bootstrap    │
-        │     env vars + the HEx blueprints on its first start).                │
+        │  1. Wait for Authentik to be healthy.                                 │
+        │     - bundled: it self-seeds from bootstrap env vars + the HEx         │
+        │       blueprints on its first start; wait for the bundled stack.       │
+        │     - external: validate connectivity to AUTHENTIK_BASE_URL (the       │
+        │       deployer's own Authentik). Gate until reachable; never crash.    │
         │  2. Using the Authentik bootstrap token, verify/finish HEx's          │
         │     integration: OIDC app + provider, scoped service account, groups  │
         │     (created by blueprint; confirm + fill any gaps via API).          │

@@ -1,6 +1,8 @@
 # 0010 — Authentik is bundled and required; first run is a guided bootstrap
 
-- Status: **Accepted** (supersedes the "assumed to exist" framing in 0001)
+- Status: **Accepted** (supersedes the "assumed to exist" framing in 0001) — **amended by
+  0013**: bundled is now the **default**, not the only path; an external/bring-your-own
+  Authentik mode also exists. See `docs/decisions/0013`.
 - Date: project inception
 
 ## Context
