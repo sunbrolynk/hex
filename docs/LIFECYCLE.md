@@ -53,10 +53,12 @@ entry per `(user, provider)`, and emits an audit event per privileged action. Ru
 
 ## 4. Dashboard
 
-The user lands on a personalized dashboard. Each provider may expose `widget_data(user)`
-(e.g. Seerr request statuses) — strictly scoped to that user. Tiles deep-link to the
-service's subdomain/subfolder as the owner has configured. The dashboard reads the ledger
-to know what the user actually has. Keep this deliberately minimal in v1.
+The user lands on a rich, personalized, configurable dashboard. Each provider may expose
+`widget_data(user)` (e.g. Seerr request statuses) — strictly scoped to that user. Tiles
+deep-link to the service's subdomain/subfolder as the owner has configured. The dashboard
+reads the ledger to know what the user actually has, so a user configures only what they have
+been granted. v1 ships curated widgets + drag/drop layout + theming (no user code/CSS yet);
+the full GUI builder plus a power-user code/CSS mode is post-v1 — see ADR 0014.
 
 ## 5. Request more access (the approval workflow layer)
 
@@ -112,7 +114,7 @@ See PROVIDER_CONTRACT for the ledger shape. Two lifecycle-critical behaviors:
 
 Pick a minimal set that forces every mode to be real before the contract calcifies:
 
-- `sso_group` — one *arr app (or similar) behind Authentik forward-auth.
+- `sso_group` — a multi-user app behind Authentik SSO (e.g. Grafana, a wiki, or Mealie).
 - `api_local` — Jellyfin.
 - `external_invite` — Plex.
 - `manual` — any service with no enrollment API (owner-authored steps).

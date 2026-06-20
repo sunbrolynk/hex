@@ -28,7 +28,7 @@ So every provider declares **two orthogonal axes**, not one.
 
 | Mode | Meaning | HEx's action to grant | Example services |
 |---|---|---|---|
-| `sso_group` | App authenticates against Authentik (OIDC / forward-auth / LDAP) and authorizes by group/claim. | Add user to an Authentik group (via Authentik API, or let Authentik SCIM-push downstream). | *arr apps behind forward-auth, Grafana (OIDC), Mealie (OIDC), most modern apps |
+| `sso_group` | App authenticates against Authentik (OIDC / forward-auth / LDAP) and authorizes by group/claim. | Add user to an Authentik group (via Authentik API, or let Authentik SCIM-push downstream). | Grafana (OIDC), a multi-user wiki (OIDC), Mealie (OIDC), most modern apps |
 | `api_local` | App owns its own user table and exposes a user-management API. | Call the app's API to create the user / set permissions. | Jellyfin, Seerr (Overseerr-compatible API) |
 | `external_invite` | Identity lives on an external IdP HEx does not control; access = a share/membership the user claims with their own account. | Send an invite/share via API; user claims it externally. | **Plex** (plex.tv), Discord server invites |
 | `manual` | No API and no SSO. HEx cannot automate it. | Render owner-authored step-by-step instructions in the wizard. | Niche apps, hardware portals, anything without an enrollment API |

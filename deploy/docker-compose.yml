@@ -1,0 +1,163 @@
+# HEx bundled stack — see docs/DEPLOYMENT.md, docs/BOOTSTRAP.md, ADR 0010 / 0013.
+#
+# ┌─ TONIGHT'S STATE (read before bringing up) ───────────────────────────────┐
+# │ Images are TAG-pinned only. Capture and pin the @sha256 digests via the    │
+# │ queued `docker compose pull` step in NOTES.md before treating as           │
+# │ production-pinned. VERIFY the Authentik image tag against the current       │
+# │ stable release, and verify the Authentik env/health specifics flagged       │
+# │ with TODO[verify] below, against that version's docs.                       │
+# └────────────────────────────────────────────────────────────────────────────┘
+#
+# Authentik mode (ADR 0013): the four authentik-* services are under the
+# `bundled-authentik` profile. Bundled mode (default) sets
+# COMPOSE_PROFILES=bundled-authentik (in the generated .env) so they start;
+# external mode leaves the profile off and points HEx at an existing Authentik.
+
+name: hex
+
+services:
+  hex:
+    build:
+      context: ..
+      dockerfile: deploy/hex/Dockerfile
+    image: ghcr.io/sunbrolynk/hex:dev
+    env_file: [.env]
+    environment:
+      HEX_STATIC_DIR: /app/frontend
+    ports:
+      # Host port is randomized off common ports (8000 was taken); override via HEX_HOST_PORT.
+      - "${HEX_HOST_PORT:-52000}:8000"
+    depends_on:
+      hex-db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    networks: [hex]
+
+  hex-db:
+    image: postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
+    environment:
+      POSTGRES_DB: ${HEX_DB_NAME}
+      POSTGRES_USER: ${HEX_DB_USER}
+      POSTGRES_PASSWORD: ${HEX_DB_PASSWORD}
+    volumes:
+      - hex-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${HEX_DB_USER} -d ${HEX_DB_NAME}"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    networks: [hex]
+    # No published ports: reachable only inside the compose network.
+    # (Hardening follow-up: move datastores to an `internal: true` network.)
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2026.5.3@sha256:377ee38726785f98aafc3665202ad198a366fa979b0f61c0660a9c05e3a9b1b3
+    profiles: [bundled-authentik]
+    command: server
+    env_file: [.env]
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: authentik-db
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASSWORD}
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_REDIS__PASSWORD: ${AUTHENTIK_REDIS_PASSWORD}
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./authentik/blueprints:/blueprints/custom:ro
+      - authentik-media:/media
+      - authentik-templates:/templates
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "ak", "healthcheck"]  # TODO[verify] Authentik's documented healthcheck
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    networks: [hex]
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2026.5.3@sha256:377ee38726785f98aafc3665202ad198a366fa979b0f61c0660a9c05e3a9b1b3
+    profiles: [bundled-authentik]
+    command: worker
+    env_file: [.env]
+    environment:
+      AUTHENTIK_POSTGRESQL__HOST: authentik-db
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASSWORD}
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_REDIS__PASSWORD: ${AUTHENTIK_REDIS_PASSWORD}
+    volumes:
+      # Worker mounts the docker socket for outpost management (Authentik's design).
+      # Deliberate, documented privilege — keep it read-only and worker-only.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./authentik/blueprints:/blueprints/custom:ro
+      - authentik-media:/media
+      - authentik-templates:/templates
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [hex]
+
+  authentik-db:
+    image: postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
+    profiles: [bundled-authentik]
+    environment:
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_PG_PASSWORD}
+    volumes:
+      - authentik-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U authentik -d authentik"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    networks: [hex]
+
+  authentik-redis:
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    profiles: [bundled-authentik]
+    command: ["redis-server", "--save", "60", "1", "--requirepass", "${AUTHENTIK_REDIS_PASSWORD}"]
+    environment:
+      # redis-cli reads REDISCLI_AUTH, so the healthcheck needn't carry the password literal.
+      REDISCLI_AUTH: ${AUTHENTIK_REDIS_PASSWORD}
+    volumes:
+      - authentik-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    networks: [hex]
+
+volumes:
+  hex-db-data:
+  authentik-db-data:
+  authentik-redis-data:
+  authentik-media:
+  authentik-templates:
+
+networks:
+  hex:

@@ -1,6 +1,6 @@
 # 0003 — The full lifecycle arc is v1 scope (depth-first)
 
-- Status: **Accepted**
+- Status: **Accepted** (dashboard scope amended by 0014)
 - Date: project inception
 
 ## Context
@@ -16,12 +16,14 @@ dashboard → request-more (approval workflow) → **offboard**. v1 is **depth-f
 breadth-first**: prove the complete arc against a deliberately small provider set chosen so
 that **all four integration modes are exercised end to end**:
 
-- `sso_group` — an *arr app (or similar) behind Authentik forward-auth,
+- `sso_group` — a multi-user app behind Authentik SSO (e.g. Grafana, a wiki, or Mealie;
+  *arr apps are single-user/owner-only, so not a valid user-provisioning example),
 - `api_local` — Jellyfin,
 - `external_invite` — Plex,
 - `manual` — a service with no enrollment API.
 
-The dashboard is intentionally minimal in v1.
+v1 ships a curated-but-rich personalized dashboard (no user code/CSS yet); the full
+configurable builder is a first-class post-v1 feature — see ADR 0014.
 
 ## Consequences
 

@@ -1,7 +1,27 @@
 # Deployment — the bundled stack
 
-HEx ships and orchestrates its identity plane. Authentik is **not** an optional, bring-your-
-own dependency; it is bundled so a single command brings up the whole system. See ADR 0010.
+HEx ships and orchestrates its identity plane. By **default** Authentik is bundled, so a
+single command brings up the whole system. See ADR 0010.
+
+## Two modes (`HEX_AUTHENTIK_MODE`)
+
+`HEX_AUTHENTIK_MODE` (`bundled` | `external`, default `bundled`) selects how Authentik is
+provided (ADR 0013). Bundled is the preferred, simple on-ramp; external is for deployers who
+already run Authentik and don't want a second one.
+
+- **bundled (default).** HEx's compose runs the Authentik services behind the
+  **`bundled-authentik`** compose profile (enabled by default via `COMPOSE_PROFILES`). The
+  bundled-stack secrets (`AUTHENTIK_SECRET_KEY`, `AUTHENTIK_PG_PASSWORD`,
+  `AUTHENTIK_REDIS_PASSWORD`, `AUTHENTIK_BOOTSTRAP_*`) are required only here. Everything in
+  "What ships" below applies.
+- **external / bring-your-own.** The `bundled-authentik` profile stays off, so no Authentik
+  services start; HEx points at the deployer's existing Authentik. Required vars:
+  `AUTHENTIK_BASE_URL`, the OIDC client creds (`AUTHENTIK_OIDC_CLIENT_ID` /
+  `AUTHENTIK_OIDC_CLIENT_SECRET`), and the scoped `AUTHENTIK_API_TOKEN`. The bundled-stack
+  secrets are not needed.
+
+The rest of this document describes **bundled mode**; its invariants (separate Postgres
+instances, locked; Authentik never embedded in HEx's container) still hold there.
 
 ## What ships
 

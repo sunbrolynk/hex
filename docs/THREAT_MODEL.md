@@ -76,6 +76,12 @@ request independently. Trust no network position, no proxy header, no client cla
   the provider's `grant_schema`; never trust a client-supplied grant blob.
 - **Supply-chain tampering** of the image/deps. → signed artifacts + provenance + SBOM +
   pinned deps (SUPPLY_CHAIN).
+- **User-authored dashboard content** (the post-v1 builder's code/CSS mode) — stored XSS,
+  CSS injection and CSS-based exfiltration, and sandbox escape. → strict CSP; allowlist HTML
+  sanitization; **no arbitrary/inline JS**; CSS/iframe sandboxing (iframe sandbox and/or
+  Shadow DOM + sanitized CSS); server-side validation of saved dashboard definitions; strict
+  per-user isolation so one user's dashboard cannot affect another user or the owner. Covered
+  by abuse tests. See ADR 0014.
 
 ### Repudiation
 
@@ -132,6 +138,9 @@ request independently. Trust no network position, no proxy header, no client cla
   another user's data.
 - **The deployer's environment** may be misconfigured. HEx must refuse to run insecurely
   rather than assume the deployer got it right.
+- **User-authored dashboard markup/CSS/code** (post-v1 builder) is hostile input. Treat it
+  as actively malicious: CSP, allowlist sanitization, no arbitrary JS, CSS/iframe sandboxing,
+  server-side validation, and per-user isolation (see Tampering above and ADR 0014).
 
 ## Mapping to a standard
 
