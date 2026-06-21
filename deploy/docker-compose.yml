@@ -24,6 +24,8 @@ services:
     env_file: [.env]
     environment:
       HEX_STATIC_DIR: /app/frontend
+      # Reach the bundled DB by its compose service name (overrides .env's localhost default).
+      HEX_DB_HOST: hex-db
     ports:
       # Host port is randomized off common ports (8000 was taken); override via HEX_HOST_PORT.
       - "${HEX_HOST_PORT:-52000}:8000"

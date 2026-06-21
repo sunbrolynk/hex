@@ -1,5 +1,8 @@
 """FastAPI application assembly."""
 
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -8,15 +11,18 @@ from fastapi.staticfiles import StaticFiles
 from hex.__version__ import __version__
 from hex.api.system_routes import router as system_router
 from hex.config import Settings, get_settings
+from hex.database import SetupStateManager, build_engine, build_sessionmaker
+from hex.database.migrate import upgrade_to_head
 from hex.secrets import broker_from_settings, validate_secrets
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the HEx API application.
 
-    Refuses to boot if required secrets are missing or weak (ADR 0005). Serves the built
-    frontend single-origin when present. (The genuine first-run bootstrap-mode exception
-    to refuse-to-boot is Slice 1b.) Run via uvicorn with ``--factory``.
+    Refuses to boot if required secrets are missing or weak (ADR 0005). Brings up the
+    database and applies migrations on startup, then serves the built frontend single-origin
+    when present. (Bootstrap-mode gating of the setup surface is Slice 1b-2.) Run via uvicorn
+    with ``--factory``.
     """
     settings = settings or get_settings()
     validate_secrets(settings)
@@ -29,11 +35,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         debug=settings.env != "production",
         docs_url="/api-docs",
         redoc_url=None,
+        lifespan=_lifespan,
     )
+    app.state.settings = settings
     app.state.secrets = broker
     app.include_router(system_router)
     _mount_spa(app, settings)
     return app
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Apply migrations, open the DB, ensure the setup-state row, dispose on shutdown.
+
+    Migrations and the engine are skipped when a test has pre-attached a sessionmaker, so the
+    fast suite builds schema directly against SQLite without touching Alembic.
+    """
+    settings: Settings = app.state.settings
+    if getattr(app.state, "sessionmaker", None) is None:
+        if settings.db_auto_migrate:
+            # Alembic is synchronous and its env runs its own loop; keep it off this one.
+            await asyncio.to_thread(upgrade_to_head, settings)
+        engine = build_engine(settings)
+        app.state.engine = engine
+        app.state.sessionmaker = build_sessionmaker(engine)
+
+    factory = app.state.sessionmaker
+    async with factory() as session:
+        await SetupStateManager(session).get_or_create()
+
+    yield
+
+    owned_engine = getattr(app.state, "engine", None)
+    if owned_engine is not None:
+        await owned_engine.dispose()
 
 
 def _mount_spa(app: FastAPI, settings: Settings) -> None:
