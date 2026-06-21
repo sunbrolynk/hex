@@ -9,6 +9,9 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "cryptography==49.0.0",
+    "sqlalchemy[asyncio]==2.0.51",
+    "asyncpg==0.31.0",
+    "alembic==1.18.4",
 ]
 
 [dependency-groups]
@@ -20,6 +23,7 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "pyright>=1.1.410",
+    "aiosqlite==0.22.1",
 ]
 
 [build-system]
@@ -66,3 +70,6 @@ addopts = "--cov=hex --cov-report=term-missing --cov-fail-under=80 --import-mode
 [tool.coverage.run]
 source = ["hex"]
 branch = true
+# Async/SQLAlchemy run via greenlet+threads; without this, lines executed through the ASGI
+# path are misattributed as missed (skews the security-critical gate).
+concurrency = ["greenlet", "thread"]
