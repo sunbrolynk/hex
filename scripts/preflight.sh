@@ -20,10 +20,10 @@ run uv run mypy
 run uv run pyright
 run uv run pytest
 
-echo "== backend: security-critical coverage (secrets + setup-state >= 95%) =="
+echo "== backend: security-critical coverage (secrets + setup-state + setup token >= 95%) =="
 # grep guards against a silent no-op if the include glob ever matches zero files.
 # The Alembic migration round-trip is Postgres-only and runs in CI (the backend pg job).
-run bash -c "set -o pipefail; uv run coverage report --include='*/hex/secrets/*,*/hex/database/setup_manager.py' --fail-under=95 | grep -E 'hex/secrets|setup_manager'"
+run bash -c "set -o pipefail; uv run coverage report --include='*/hex/secrets/*,*/hex/setup/*,*/hex/database/setup_manager.py' --fail-under=95 | grep -E 'hex/secrets|hex/setup|setup_manager'"
 
 echo "== backend: dependency audit (mirrors CI dependency-scan) =="
 run bash -c 'uv export --frozen --no-dev --no-emit-project --format requirements-txt -o /tmp/hex-reqs.txt && uvx pip-audit -r /tmp/hex-reqs.txt'

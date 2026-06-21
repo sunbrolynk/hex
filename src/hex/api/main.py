@@ -1,6 +1,7 @@
 """FastAPI application assembly."""
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,17 +13,19 @@ from hex.__version__ import __version__
 from hex.api.system_routes import router as system_router
 from hex.config import Settings, get_settings
 from hex.database import SetupStateManager, build_engine, build_sessionmaker
-from hex.database.migrate import upgrade_to_head
+from hex.database.migrate import assert_at_head, upgrade_to_head
 from hex.secrets import broker_from_settings, validate_secrets
+from hex.setup import AttemptLimiter
+
+log = logging.getLogger("hex.setup")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the HEx API application.
 
     Refuses to boot if required secrets are missing or weak (ADR 0005). Brings up the
-    database and applies migrations on startup, then serves the built frontend single-origin
-    when present. (Bootstrap-mode gating of the setup surface is Slice 1b-2.) Run via uvicorn
-    with ``--factory``.
+    database and applies migrations on startup, mints the first-run setup token, then serves
+    the built frontend single-origin when present. Run via uvicorn with ``--factory``.
     """
     settings = settings or get_settings()
     validate_secrets(settings)
@@ -39,6 +42,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.secrets = broker
+    app.state.setup_limiter = AttemptLimiter(
+        settings.setup_unlock_max_attempts, settings.setup_unlock_window_seconds
+    )
     app.include_router(system_router)
     _mount_spa(app, settings)
     return app
@@ -46,7 +52,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Apply migrations, open the DB, ensure the setup-state row, dispose on shutdown.
+    """Apply migrations, open the DB, seed setup-state, mint the setup token, dispose on shutdown.
 
     Migrations and the engine are skipped when a test has pre-attached a sessionmaker, so the
     fast suite builds schema directly against SQLite without touching Alembic.
@@ -56,13 +62,21 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if settings.db_auto_migrate:
             # Alembic is synchronous and its env runs its own loop; keep it off this one.
             await asyncio.to_thread(upgrade_to_head, settings)
+        elif settings.env == "production":
+            # Operator owns migrations here; refuse to serve against a stale schema.
+            await assert_at_head(settings)
         engine = build_engine(settings)
         app.state.engine = engine
         app.state.sessionmaker = build_sessionmaker(engine)
 
     factory = app.state.sessionmaker
     async with factory() as session:
-        await SetupStateManager(session).get_or_create()
+        manager = SetupStateManager(session)
+        await manager.get_or_create()
+        token = await manager.issue_setup_token()
+    if token is not None:
+        # The one place the plaintext appears: out-of-band retrieval from the container logs.
+        log.warning("First-run setup token (enter it in the browser to begin setup): %s", token)
 
     yield
 

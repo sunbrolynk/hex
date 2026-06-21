@@ -35,11 +35,12 @@
       "Bash(tail:*)",
       "Bash(wc:*)",
       "Bash(mkdir:*)",
-      "Bash(touch:*)"
+      "Bash(touch:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ],
     "ask": [
-      "Bash(git commit:*)",
-      "Bash(git push:*)",
+
       "Bash(git merge:*)",
       "Bash(git rebase:*)",
       "Bash(gh pr:*)",
@@ -78,6 +79,14 @@
     ]
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-push-guard.sh" }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
