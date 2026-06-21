@@ -11,11 +11,12 @@ from fastapi.staticfiles import StaticFiles
 
 from hex.__version__ import __version__
 from hex.api.system_routes import router as system_router
+from hex.audit import AuditSigner
 from hex.config import Settings, get_settings
-from hex.database import SetupStateManager, build_engine, build_sessionmaker
+from hex.database import AuditLogManager, SetupStateManager, build_engine, build_sessionmaker
 from hex.database.migrate import assert_at_head, upgrade_to_head
 from hex.secrets import broker_from_settings, validate_secrets
-from hex.setup import AttemptLimiter
+from hex.setup import AttemptLimiter, LockoutCounter
 
 log = logging.getLogger("hex.setup")
 
@@ -42,9 +43,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.secrets = broker
+    app.state.audit_signer = AuditSigner.from_settings(settings)
     app.state.setup_limiter = AttemptLimiter(
         settings.setup_unlock_max_attempts, settings.setup_unlock_window_seconds
     )
+    app.state.setup_lockout = LockoutCounter()
     app.include_router(system_router)
     _mount_spa(app, settings)
     return app
@@ -73,7 +76,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with factory() as session:
         manager = SetupStateManager(session)
         await manager.get_or_create()
-        token = await manager.issue_setup_token()
+        audit = AuditLogManager(session, app.state.audit_signer)
+        token = await manager.issue_setup_token(audit)
     if token is not None:
         # The one place the plaintext appears: out-of-band retrieval from the container logs.
         log.warning("First-run setup token (enter it in the browser to begin setup): %s", token)

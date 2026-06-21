@@ -1,6 +1,9 @@
 """System route tests."""
 
+import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -11,9 +14,19 @@ from sqlalchemy.pool import StaticPool
 
 from hex.__version__ import __version__
 from hex.api.main import create_app
-from hex.database import SetupStateManager, build_sessionmaker
-from hex.database.models import SetupPhase, SetupState
+from hex.database import AuditLogManager, SetupStateManager, build_sessionmaker
+from hex.database.models import AuditLogEntry, SetupPhase, SetupState
 from tests.conftest import make_settings
+
+
+async def _audit_actions(sessionmaker: async_sessionmaker[AsyncSession]) -> list[str]:
+    async with sessionmaker() as session:
+        rows = (
+            (await session.execute(select(AuditLogEntry).order_by(AuditLogEntry.id)))
+            .scalars()
+            .all()
+        )
+        return [row.action.value for row in rows]
 
 
 async def test_health_ok(client: AsyncClient) -> None:
@@ -166,3 +179,126 @@ async def test_setup_unlock_returns_503_when_db_unavailable() -> None:
 
     assert resp.status_code == 503
     assert resp.json() == {"detail": "database unavailable"}
+
+
+async def test_setup_unlock_default_throttle_is_three(
+    engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The lowered default: three failures allowed, the fourth is throttled."""
+    app = create_app(make_settings())
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    async with sessionmaker() as session:
+        await SetupStateManager(session).get_or_create()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        codes = [
+            (await client.post("/setup/unlock", json={"token": "x"})).status_code for _ in range(4)
+        ]
+    assert codes == [401, 401, 401, 429]
+
+
+async def test_setup_unlock_audits_failures_and_throttle(
+    engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    app = create_app(make_settings(setup_unlock_max_attempts=2))
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    async with sessionmaker() as session:
+        await SetupStateManager(session).get_or_create()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        for _ in range(3):
+            await client.post("/setup/unlock", json={"token": "x"})
+
+    assert await _audit_actions(sessionmaker) == [
+        "setup.unlock.failed",
+        "setup.unlock.failed",
+        "setup.unlock.throttled",
+    ]
+
+
+async def test_setup_unlock_lockout_burns_token_and_freezes(
+    engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Sustained failures past the threshold burn the token and freeze the surface with 423."""
+    app = create_app(make_settings(setup_unlock_max_attempts=100, setup_unlock_lockout_threshold=3))
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    async with sessionmaker() as session:
+        token = await SetupStateManager(session).issue_setup_token()
+    assert token is not None
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        codes = [
+            (await client.post("/setup/unlock", json={"token": "x"})).status_code for _ in range(3)
+        ]
+        # Frozen now — even the real token is refused until a restart.
+        after = await client.post("/setup/unlock", json={"token": token})
+
+    assert codes == [401, 401, 423]
+    assert after.status_code == 423
+    assert await _audit_actions(sessionmaker) == [
+        "setup.unlock.failed",
+        "setup.unlock.failed",
+        "setup.unlock.locked_out",
+    ]
+    async with sessionmaker() as session:
+        state = await session.get(SetupState, 1)
+        assert state is not None
+        assert state.setup_token_hash is None  # burned
+        assert state.phase is SetupPhase.FIRST_RUN  # locked, never advanced
+
+
+async def test_setup_unlock_best_effort_audit_never_becomes_500(
+    engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed failure-audit write is swallowed: the client still gets 401, never a 500."""
+    app = create_app(make_settings())
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    async with sessionmaker() as session:
+        await SetupStateManager(session).get_or_create()
+
+    async def boom_append(self: AuditLogManager, **kwargs: object) -> None:
+        raise RuntimeError("audit backend down")
+
+    monkeypatch.setattr(AuditLogManager, "append", boom_append)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/setup/unlock", json={"token": "x"})
+    assert resp.status_code == 401
+
+
+async def test_setup_unlock_burn_db_error_is_503(
+    engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A DB error while burning the token during lockout surfaces as 503, not a 500."""
+    app = create_app(make_settings(setup_unlock_max_attempts=100, setup_unlock_lockout_threshold=1))
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    async with sessionmaker() as session:
+        await SetupStateManager(session).get_or_create()
+
+    async def boom_burn(
+        self: SetupStateManager, audit: AuditLogManager, *, actor: str, failure_count: int
+    ) -> None:
+        raise SQLAlchemyError("db down")
+
+    monkeypatch.setattr(SetupStateManager, "burn_setup_token", boom_burn)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/setup/unlock", json={"token": "x"})
+    assert resp.status_code == 503

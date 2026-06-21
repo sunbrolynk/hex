@@ -3,9 +3,11 @@ import { unlockSetup } from '../../api/setup'
 
 // The seed of the owner-setup wizard (owner-setup-wizard-vision): for now, the token gate plus a
 // stub for what comes after unlock. Wrong/throttled/error all surface a generic, non-leaky line.
-const MESSAGES: Record<'invalid' | 'throttled' | 'error', string> = {
+const MESSAGES: Record<'invalid' | 'throttled' | 'locked' | 'error', string> = {
   invalid: 'That setup token was not accepted. Re-check it in the server logs and try again.',
   throttled: 'Too many attempts. Wait a minute, then try again.',
+  locked:
+    'Setup is locked after too many failed attempts. Restart HEx to mint a new token, then enter that.',
   error: 'Something went wrong reaching HEx. Try again.',
 }
 

@@ -17,6 +17,7 @@ def _valid_settings(**overrides: SecretStr) -> Settings:
         "kek": SecretStr(base64.b64encode(secrets.token_bytes(32)).decode()),
         "db_password": SecretStr(secrets.token_urlsafe(32)),
         "proxy_shared_secret": SecretStr(secrets.token_urlsafe(48)),
+        "audit_key": SecretStr(secrets.token_urlsafe(48)),
     }
     return Settings.model_validate(base | overrides)
 
@@ -24,6 +25,11 @@ def _valid_settings(**overrides: SecretStr) -> Settings:
 def test_create_app_refuses_weak_secret() -> None:
     with pytest.raises(InsecureConfigError):
         create_app(_valid_settings(secret_key=SecretStr("changeme")))
+
+
+def test_create_app_refuses_missing_audit_key() -> None:
+    with pytest.raises(InsecureConfigError):
+        create_app(_valid_settings(audit_key=SecretStr("")))
 
 
 def test_create_app_boots_with_valid_secrets() -> None:

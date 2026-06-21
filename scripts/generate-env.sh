@@ -28,6 +28,7 @@ b64 = lambda n: base64.b64encode(secrets.token_bytes(n)).decode()
 gen = {
     "HEX_SECRET_KEY": lambda: urlsafe(64),
     "HEX_KEK": lambda: b64(32),
+    "HEX_AUDIT_KEY": lambda: urlsafe(48),
     "HEX_DB_PASSWORD": lambda: urlsafe(32),
     "HEX_PROXY_SHARED_SECRET": lambda: urlsafe(48),
     "AUTHENTIK_SECRET_KEY": lambda: urlsafe(60),

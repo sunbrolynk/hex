@@ -1,5 +1,4 @@
 {
-  "$comment": "HEx project Claude Code gating. Committed so guardrails apply every session. Precedence is deny > ask > allow; deny always wins and cannot be overridden by an allow rule. ASK > ALLOW too, so a broad ask pattern overrides a narrow allow — that is why uv is split into specific subcommands instead of a blanket uv:* . See docs/WORKFLOW.md and .claude/README.md.",
   "permissions": {
     "allow": [
       "Read",
@@ -39,8 +38,26 @@
       "Bash(git commit:*)",
       "Bash(git push:*)"
     ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(./.env.production)",
+      "Read(./.env.development)",
+      "Read(./deploy/.env)",
+      "Edit(./.env)",
+      "Edit(./.env.local)",
+      "Edit(./.env.production)",
+      "Edit(./.env.development)",
+      "Edit(./deploy/.env)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)",
+      "Bash(rm -rf:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(sudo:*)"
+    ],
     "ask": [
-
       "Bash(git merge:*)",
       "Bash(git rebase:*)",
       "Bash(gh pr:*)",
@@ -58,24 +75,6 @@
       "Bash(uv pip install:*)",
       "Bash(uv pip sync:*)",
       "Bash(uv publish:*)"
-    ],
-    "deny": [
-      "Read(./.env)",
-      "Read(./.env.local)",
-      "Read(./.env.production)",
-      "Read(./.env.development)",
-      "Read(./secrets/**)",
-      "Edit(./.env)",
-      "Edit(./.env.local)",
-      "Edit(./.env.production)",
-      "Edit(./.env.development)",
-      "Bash(git push --force:*)",
-      "Bash(git push -f:*)",
-      "Bash(git push --force-with-lease:*)",
-      "Bash(rm -rf:*)",
-      "Bash(curl:*)",
-      "Bash(wget:*)",
-      "Bash(sudo:*)"
     ]
   },
   "hooks": {
@@ -83,7 +82,10 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-push-guard.sh" }
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-push-guard.sh"
+          }
         ]
       }
     ],
@@ -91,23 +93,33 @@
       {
         "matcher": "Edit|Write",
         "hooks": [
-          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-check.sh" }
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-check.sh"
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/notify.sh" }
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/notify.sh"
+          }
         ]
       }
     ],
     "Notification": [
       {
         "hooks": [
-          { "type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/notify.sh" }
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/notify.sh"
+          }
         ]
       }
     ]
-  }
+  },
+  "$comment": "HEx project Claude Code gating. Committed so guardrails apply every session. Precedence is deny > ask > allow; deny always wins and cannot be overridden by an allow rule. ASK > ALLOW too, so a broad ask pattern overrides a narrow allow — that is why uv is split into specific subcommands instead of a blanket uv:* . See docs/WORKFLOW.md and .claude/README.md."
 }
