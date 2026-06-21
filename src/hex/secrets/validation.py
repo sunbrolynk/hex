@@ -42,6 +42,12 @@ _RULES: tuple[SecretRule, ...] = (
         32,
         'python -c "import secrets; print(secrets.token_urlsafe(48))"',
     ),
+    SecretRule(
+        "audit_key",
+        "HEX_AUDIT_KEY",
+        43,  # ≥256-bit floor: the HMAC key securing the audit chain's tamper-evidence.
+        'python -c "import secrets; print(secrets.token_urlsafe(48))"',
+    ),
 )
 
 

@@ -3,7 +3,7 @@
 import logging
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import (
 
 from hex.api import main
 from hex.api.main import create_app
-from hex.database import Base, SetupStateManager
-from hex.database.models import SetupPhase, SetupState
+from hex.database import AuditLogManager, Base, SetupStateManager
+from hex.database.models import AuditAction, AuditLogEntry, SetupPhase, SetupState
 from hex.setup import hash_token
 from tests.conftest import make_settings
 
@@ -54,6 +54,23 @@ async def test_lifespan_mints_and_logs_the_setup_token_once(
                 assert state is not None
                 assert state.phase is SetupPhase.FIRST_RUN
                 assert state.setup_token_hash == hash_token(token)
+
+
+async def test_lifespan_audits_token_issuance_in_one_chained_row(
+    engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    app = create_app(make_settings())
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+
+    # Assert inside the context: lifespan shutdown disposes the (in-memory) engine.
+    async with app.router.lifespan_context(app):
+        async with sessionmaker() as session:
+            rows = (await session.execute(select(AuditLogEntry))).scalars().all()
+            assert len(rows) == 1
+            assert rows[0].action is AuditAction.SETUP_TOKEN_ISSUED
+            assert await AuditLogManager(session, app.state.audit_signer).verify_chain() is True
 
 
 async def test_lifespan_does_not_mint_token_past_first_run(

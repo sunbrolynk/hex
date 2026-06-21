@@ -10,7 +10,7 @@ from hex.config import Settings
 from hex.secrets.errors import InsecureConfigError
 from hex.secrets.validation import validate_secrets
 
-_FIELDS = ["secret_key", "kek", "db_password", "proxy_shared_secret"]
+_FIELDS = ["secret_key", "kek", "db_password", "proxy_shared_secret", "audit_key"]
 
 
 def _valid() -> dict[str, SecretStr]:
@@ -19,6 +19,7 @@ def _valid() -> dict[str, SecretStr]:
         "kek": SecretStr(base64.b64encode(secrets.token_bytes(32)).decode()),
         "db_password": SecretStr(secrets.token_urlsafe(32)),
         "proxy_shared_secret": SecretStr(secrets.token_urlsafe(48)),
+        "audit_key": SecretStr(secrets.token_urlsafe(48)),
     }
 
 

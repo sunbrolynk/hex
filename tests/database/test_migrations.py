@@ -33,6 +33,35 @@ async def _assert_setup_state_queryable(url: str) -> None:
         await engine.dispose()
 
 
+async def _assert_audit_schema(url: str) -> None:
+    """0003 built the audit tables AND the integrity constraints the hash chain relies on."""
+    engine = create_async_engine(url)
+    try:
+        async with engine.connect() as conn:
+            # Named columns → a missing/renamed audit column fails here, not silently in CI.
+            await conn.execute(
+                text(
+                    "SELECT id, occurred_at, action, severity, result, actor, target, meta, "
+                    "prev_hash, entry_hash FROM audit_log"
+                )
+            )
+            await conn.execute(text("SELECT id, last_hash, seq FROM audit_chain_head"))
+            # The unique (anti-fork) and singleton constraints must be in the catalog, not just
+            # the ORM metadata — a migration that dropped them would otherwise ship green.
+            result = await conn.execute(
+                text(
+                    "SELECT conname FROM pg_constraint WHERE conname IN "
+                    "('uq_audit_log_entry_hash', 'ck_audit_chain_head_singleton')"
+                )
+            )
+            assert {row[0] for row in result} == {
+                "uq_audit_log_entry_hash",
+                "ck_audit_chain_head_singleton",
+            }
+    finally:
+        await engine.dispose()
+
+
 def test_upgrade_downgrade_roundtrip() -> None:
     settings = Settings()
     cfg = build_config(settings)
@@ -40,6 +69,7 @@ def test_upgrade_downgrade_roundtrip() -> None:
     command.upgrade(cfg, "head")
     # Prove the upgrade actually built the schema (not a silent no-op).
     asyncio.run(_assert_setup_state_queryable(settings.database_url))
+    asyncio.run(_assert_audit_schema(settings.database_url))
 
     command.downgrade(cfg, "base")
     command.upgrade(cfg, "head")

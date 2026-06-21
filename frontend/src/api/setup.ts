@@ -7,7 +7,7 @@ export interface SetupStatus {
 
 export type UnlockResult =
   | { ok: true; status: SetupStatus }
-  | { ok: false; reason: 'invalid' | 'throttled' | 'error' }
+  | { ok: false; reason: 'invalid' | 'throttled' | 'locked' | 'error' }
 
 export async function getSetupStatus(): Promise<SetupStatus> {
   const res = await fetch('/setup/status')
@@ -25,5 +25,7 @@ export async function unlockSetup(token: string): Promise<UnlockResult> {
   // A wrong, expired, or already-consumed token are indistinguishable here, by design.
   if (res.status === 401) return { ok: false, reason: 'invalid' }
   if (res.status === 429) return { ok: false, reason: 'throttled' }
+  // 423: lockout burned the token and froze setup until a restart re-mints.
+  if (res.status === 423) return { ok: false, reason: 'locked' }
   return { ok: false, reason: 'error' }
 }

@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 # Refuse-to-boot abuse cases pass crafted Settings directly (see tests/secrets, tests/api).
 os.environ.setdefault("HEX_SECRET_KEY", secrets.token_urlsafe(64))
 os.environ.setdefault("HEX_KEK", base64.b64encode(secrets.token_bytes(32)).decode())
+os.environ.setdefault("HEX_AUDIT_KEY", secrets.token_urlsafe(48))
 os.environ.setdefault("HEX_DB_PASSWORD", secrets.token_urlsafe(32))
 os.environ.setdefault("HEX_PROXY_SHARED_SECRET", secrets.token_urlsafe(48))
 
@@ -32,6 +33,7 @@ def make_settings(**overrides: object) -> Settings:
     base: dict[str, object] = {
         "secret_key": secrets.token_urlsafe(64),
         "kek": base64.b64encode(secrets.token_bytes(32)).decode(),
+        "audit_key": secrets.token_urlsafe(48),
         "db_password": secrets.token_urlsafe(32),
         "proxy_shared_secret": secrets.token_urlsafe(48),
         "db_auto_migrate": False,

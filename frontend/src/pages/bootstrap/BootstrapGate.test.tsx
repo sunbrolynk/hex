@@ -72,6 +72,18 @@ describe('BootstrapGate', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/too many attempts/i)
   })
 
+  it('tells the operator to restart when setup is locked out (423)', async () => {
+    mockUnlock({ ok: false, status: 423 })
+    const onAdvance = vi.fn()
+    render(<BootstrapGate phase="first_run" onAdvance={onAdvance} />)
+
+    enterToken('whatever')
+    fireEvent.click(screen.getByRole('button', { name: 'Begin setup' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/locked.*restart hex/i)
+    expect(onAdvance).not.toHaveBeenCalled()
+  })
+
   it('shows a generic message on an unexpected server error', async () => {
     mockUnlock({ ok: false, status: 500 })
     render(<BootstrapGate phase="first_run" onAdvance={vi.fn()} />)

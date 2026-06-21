@@ -49,13 +49,13 @@ jobs:
         run: uv run pyright
       - name: Tests + coverage gate
         run: uv run pytest --cov-report=xml   # --cov/--cov-fail-under come from pyproject addopts
-      - name: Security-critical coverage gate (secrets + setup-state + setup token >= 95%)
+      - name: Security-critical coverage gate (secrets + setup-state + setup token + audit >= 95%)
         # grep guards against a silent no-op if the include glob ever matches zero files.
         run: |
           set -o pipefail
           uv run coverage report \
-            --include='*/hex/secrets/*,*/hex/setup/*,*/hex/database/setup_manager.py' \
-            --fail-under=95 | grep -E 'hex/secrets|hex/setup|setup_manager'
+            --include='*/hex/secrets/*,*/hex/setup/*,*/hex/audit/*,*/hex/database/setup_manager.py,*/hex/database/audit_manager.py' \
+            --fail-under=95 | grep -E 'hex/secrets|hex/setup|hex/audit|setup_manager|audit_manager'
       - name: Migration round-trip (Postgres)
         # Scoped env (not job-level) so the weak DB password never reaches the rest of the
         # suite's secret validation. --no-cov keeps the coverage report above intact.
