@@ -32,7 +32,12 @@ class Settings(BaseSettings):
     db_user: str = "hex"
 
     # Apply migrations to head on startup. Tests disable this and build schema directly.
+    # In production with auto-migrate off, boot asserts the DB is already at head (fail-secure).
     db_auto_migrate: bool = True
+
+    # First-run setup-token unlock throttle (defense-in-depth; the token is ≥256-bit already).
+    setup_unlock_max_attempts: int = 5
+    setup_unlock_window_seconds: float = 60.0
 
     # Required secrets — validated at boot by hex.secrets (empty default so we own the errors).
     secret_key: SecretStr = SecretStr("")

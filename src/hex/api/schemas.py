@@ -1,6 +1,6 @@
 """Central API schemas."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from hex.database.models import SetupPhase
 
@@ -17,3 +17,9 @@ class SetupStatusResponse(BaseModel):
 
     phase: SetupPhase
     setup_required: bool
+
+
+class SetupUnlockRequest(BaseModel):
+    """Body for ``POST /setup/unlock``: the out-of-band setup token from the container logs."""
+
+    token: str = Field(min_length=1, max_length=512)

@@ -25,7 +25,10 @@ async def _assert_setup_state_queryable(url: str) -> None:
     engine = create_async_engine(url)
     try:
         async with engine.connect() as conn:
-            await conn.execute(text("SELECT id, phase FROM setup_state"))
+            # Name the 0002 columns explicitly so a no-op add-column migration would fail here.
+            await conn.execute(
+                text("SELECT id, phase, setup_token_hash, setup_token_issued_at FROM setup_state")
+            )
     finally:
         await engine.dispose()
 
