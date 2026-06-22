@@ -69,9 +69,7 @@ class Settings(BaseSettings):
     # validation_alias bypasses env_prefix, so the HEx-prefixed name is listed explicitly.
     authentik_bootstrap_token: SecretStr = Field(
         default=SecretStr(""),
-        validation_alias=AliasChoices(
-            "HEX_AUTHENTIK_BOOTSTRAP_TOKEN", "AUTHENTIK_BOOTSTRAP_TOKEN"
-        ),
+        validation_alias=AliasChoices("HEX_AUTHENTIK_BOOTSTRAP_TOKEN", "AUTHENTIK_BOOTSTRAP_TOKEN"),
     )
 
     # Server-side session + OIDC login-flow lifetimes.

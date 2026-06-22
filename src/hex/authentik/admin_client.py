@@ -81,9 +81,7 @@ class AuthentikAdminClient:
         return await self._get_one("/core/applications/", "slug", slug, f"application '{slug}'")
 
     async def get_oauth2_provider(self, name: str) -> dict[str, Any]:
-        return await self._get_one(
-            "/providers/oauth2/", "name", name, f"OAuth2 provider '{name}'"
-        )
+        return await self._get_one("/providers/oauth2/", "name", name, f"OAuth2 provider '{name}'")
 
     async def get_service_account(self, username: str) -> dict[str, Any]:
         return await self._get_one(

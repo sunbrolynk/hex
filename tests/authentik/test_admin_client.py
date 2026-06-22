@@ -37,8 +37,12 @@ def _group() -> dict:
 def _sa(*, is_superuser: bool = False) -> dict:
     return {
         "results": [
-            {"pk": 11, "username": "hex-provisioner", "type": "service_account",
-             "is_superuser": is_superuser}
+            {
+                "pk": 11,
+                "username": "hex-provisioner",
+                "type": "service_account",
+                "is_superuser": is_superuser,
+            }
         ]
     }
 
@@ -87,9 +91,7 @@ async def test_verify_rejects_superuser_service_account() -> None:
 
 def test_assert_not_superuser_raises_directly() -> None:
     with pytest.raises(OverprivilegedServiceAccount):
-        AuthentikAdminClient.assert_not_superuser(
-            {"username": "x", "is_superuser": True}
-        )
+        AuthentikAdminClient.assert_not_superuser({"username": "x", "is_superuser": True})
 
 
 def test_assert_not_superuser_allows_least_privilege() -> None:
