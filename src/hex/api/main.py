@@ -6,15 +6,19 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from hex.__version__ import __version__
+from hex.api.auth_routes import router as auth_router
 from hex.api.system_routes import router as system_router
 from hex.audit import AuditSigner
 from hex.config import Settings, get_settings
 from hex.database import AuditLogManager, SetupStateManager, build_engine, build_sessionmaker
 from hex.database.migrate import assert_at_head, upgrade_to_head
+from hex.database.models import AuditAction, AuditResult, AuditSeverity
+from hex.oidc import DiscoveryCache, OIDCClient
 from hex.secrets import broker_from_settings, validate_secrets
 from hex.setup import AttemptLimiter, LockoutCounter
 
@@ -48,7 +52,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.setup_unlock_max_attempts, settings.setup_unlock_window_seconds
     )
     app.state.setup_lockout = LockoutCounter()
+    app.state.http = httpx.AsyncClient(timeout=10.0)
+    app.state.oidc = OIDCClient(settings, app.state.http, DiscoveryCache(app.state.http))
     app.include_router(system_router)
+    app.include_router(auth_router)
     _mount_spa(app, settings)
     return app
 
@@ -82,8 +89,25 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # The one place the plaintext appears: out-of-band retrieval from the container logs.
         log.warning("First-run setup token (enter it in the browser to begin setup): %s", token)
 
+    # Audit-hardening: verify the chain at boot. Warn + audit on failure (do NOT refuse boot — a
+    # legitimate HEX_AUDIT_KEY rotation would otherwise brick startup); surface a degraded flag.
+    app.state.audit_chain_ok = True
+    async with factory() as session:
+        audit = AuditLogManager(session, app.state.audit_signer)
+        if not await audit.verify_chain():
+            app.state.audit_chain_ok = False
+            log.critical("audit chain verification FAILED at boot — tampering or key rotation")
+            await audit.append(
+                action=AuditAction.AUDIT_CHAIN_VERIFICATION_FAILED,
+                severity=AuditSeverity.HIGH,
+                result=AuditResult.FAILURE,
+                actor="system",
+            )
+            await session.commit()
+
     yield
 
+    await app.state.http.aclose()
     owned_engine = getattr(app.state, "engine", None)
     if owned_engine is not None:
         await owned_engine.dispose()

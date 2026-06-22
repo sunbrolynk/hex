@@ -23,3 +23,12 @@ class SetupUnlockRequest(BaseModel):
     """Body for ``POST /setup/unlock``: the out-of-band setup token from the container logs."""
 
     token: str = Field(min_length=1, max_length=512)
+
+
+class UserResponse(BaseModel):
+    """Current-user payload for ``GET /auth/me``. No tokens, no Authentik internals."""
+
+    id: int
+    username: str | None
+    email: str | None
+    is_owner: bool

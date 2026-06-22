@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, String, func
+from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, String, func
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -62,6 +62,10 @@ class AuditAction(StrEnum):
     SETUP_UNLOCK_FAILED = "setup.unlock.failed"
     SETUP_UNLOCK_THROTTLED = "setup.unlock.throttled"
     SETUP_UNLOCK_LOCKED_OUT = "setup.unlock.locked_out"
+    OIDC_LOGIN_SUCCEEDED = "oidc.login.succeeded"
+    OIDC_LOGIN_FAILED = "oidc.login.failed"
+    OIDC_LOGOUT = "oidc.logout"
+    AUDIT_CHAIN_VERIFICATION_FAILED = "audit.chain.verification_failed"
 
 
 class AuditSeverity(StrEnum):
@@ -121,3 +125,45 @@ class AuditLogEntry(Base):
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     prev_hash: Mapped[str] = mapped_column(String(64))
     entry_hash: Mapped[str] = mapped_column(String(64), unique=True)
+
+
+class User(Base):
+    """A HEx user, keyed to an Authentik identity (the OIDC ``sub``)."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    authentik_sub: Mapped[str] = mapped_column(String(255), unique=True)
+    username: Mapped[str | None] = mapped_column(String(255), default=None)
+    email: Mapped[str | None] = mapped_column(String(320), default=None)
+    # Owner-vs-user determination + enforcement lands in Slice 3 (owner setup); default false.
+    is_owner: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class UserSession(Base):
+    """A server-side session. The cookie carries the raw token; only its SHA-256 is stored."""
+
+    __tablename__ = "user_sessions"
+
+    session_token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+
+class OIDCLoginState(Base):
+    """Transient one-time state for an in-flight Authorization-Code round-trip."""
+
+    __tablename__ = "oidc_login_state"
+
+    state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    nonce: Mapped[str] = mapped_column(String(64))
+    code_verifier: Mapped[str] = mapped_column(String(128))
+    redirect_to: Mapped[str] = mapped_column(String(512), default="/")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

@@ -10,6 +10,7 @@ import os
 import pytest
 from alembic import command
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from hex.config import Settings
@@ -62,6 +63,60 @@ async def _assert_audit_schema(url: str) -> None:
         await engine.dispose()
 
 
+async def _assert_auth_schema(url: str) -> None:
+    """0004 built the users / sessions / login-state tables (named columns catch drift)."""
+    engine = create_async_engine(url)
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(
+                text(
+                    "SELECT id, authentik_sub, username, email, is_owner, created_at, updated_at "
+                    "FROM users"
+                )
+            )
+            await conn.execute(
+                text(
+                    "SELECT session_token_hash, user_id, created_at, expires_at, last_seen_at "
+                    "FROM user_sessions"
+                )
+            )
+            await conn.execute(
+                text(
+                    "SELECT state_hash, nonce, code_verifier, redirect_to, created_at, expires_at "
+                    "FROM oidc_login_state"
+                )
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _assert_audit_log_is_immutable(url: str) -> None:
+    """The widened CHECK accepts new actions, and the trigger rejects UPDATE/DELETE on audit_log."""
+    engine = create_async_engine(url)
+    insert = text(
+        "INSERT INTO audit_log "
+        "(occurred_at, action, severity, result, actor, meta, prev_hash, entry_hash) "
+        "VALUES (now(), 'oidc.login.succeeded', 'notice', 'success', 'system', '{}', :p, :e)"
+    )
+    marker = {"p": "0" * 64, "e": "a" * 64}
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(insert, marker)  # widened CHECK accepts oidc.login.succeeded
+        with pytest.raises(DBAPIError):  # UPDATE blocked by the immutability trigger
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text("UPDATE audit_log SET actor = 'x' WHERE entry_hash = :e"),
+                    {"e": marker["e"]},
+                )
+        with pytest.raises(DBAPIError):  # DELETE blocked too
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text("DELETE FROM audit_log WHERE entry_hash = :e"), {"e": marker["e"]}
+                )
+    finally:
+        await engine.dispose()
+
+
 def test_upgrade_downgrade_roundtrip() -> None:
     settings = Settings()
     cfg = build_config(settings)
@@ -70,6 +125,8 @@ def test_upgrade_downgrade_roundtrip() -> None:
     # Prove the upgrade actually built the schema (not a silent no-op).
     asyncio.run(_assert_setup_state_queryable(settings.database_url))
     asyncio.run(_assert_audit_schema(settings.database_url))
+    asyncio.run(_assert_auth_schema(settings.database_url))
+    asyncio.run(_assert_audit_log_is_immutable(settings.database_url))
 
     command.downgrade(cfg, "base")
     command.upgrade(cfg, "head")

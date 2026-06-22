@@ -3,7 +3,7 @@
 import logging
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -14,7 +14,14 @@ from sqlalchemy.ext.asyncio import (
 from hex.api import main
 from hex.api.main import create_app
 from hex.database import AuditLogManager, Base, SetupStateManager
-from hex.database.models import AuditAction, AuditLogEntry, SetupPhase, SetupState
+from hex.database.models import (
+    AuditAction,
+    AuditLogEntry,
+    AuditResult,
+    AuditSeverity,
+    SetupPhase,
+    SetupState,
+)
 from hex.setup import hash_token
 from tests.conftest import make_settings
 
@@ -71,6 +78,54 @@ async def test_lifespan_audits_token_issuance_in_one_chained_row(
             assert len(rows) == 1
             assert rows[0].action is AuditAction.SETUP_TOKEN_ISSUED
             assert await AuditLogManager(session, app.state.audit_signer).verify_chain() is True
+
+
+async def test_lifespan_boot_verify_chain_passes_on_clean_chain(
+    engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    app = create_app(make_settings())
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    async with app.router.lifespan_context(app):
+        assert app.state.audit_chain_ok is True
+        async with sessionmaker() as session:
+            rows = (await session.execute(select(AuditLogEntry))).scalars().all()
+        # Only the issuance row — a clean verify adds nothing.
+        assert [r.action for r in rows] == [AuditAction.SETUP_TOKEN_ISSUED]
+
+
+async def test_lifespan_boot_verify_chain_detects_tamper_and_boots_anyway(
+    engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    app = create_app(make_settings())
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    # Past FIRST_RUN (no issuance), seed an audit row, then tamper it so verify_chain fails at boot.
+    async with sessionmaker() as session:
+        state = await SetupStateManager(session).get_or_create()
+        state.phase = SetupPhase.COMPLETE
+        await AuditLogManager(session, app.state.audit_signer).append(
+            action=AuditAction.SETUP_TOKEN_ISSUED,
+            severity=AuditSeverity.INFO,
+            result=AuditResult.SUCCESS,
+            actor="system",
+        )
+        await session.commit()
+        await session.execute(text("UPDATE audit_log SET actor='attacker' WHERE id=1"))
+        await session.commit()
+
+    async with app.router.lifespan_context(app):
+        assert app.state.audit_chain_ok is False  # warned, not refused
+        async with sessionmaker() as session:
+            actions = [
+                r.action.value
+                for r in (await session.execute(select(AuditLogEntry).order_by(AuditLogEntry.id)))
+                .scalars()
+                .all()
+            ]
+    assert "audit.chain.verification_failed" in actions
 
 
 async def test_lifespan_does_not_mint_token_past_first_run(
