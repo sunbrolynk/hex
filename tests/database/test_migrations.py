@@ -10,6 +10,7 @@ import os
 import pytest
 from alembic import command
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from hex.config import Settings
@@ -62,6 +63,75 @@ async def _assert_audit_schema(url: str) -> None:
         await engine.dispose()
 
 
+async def _assert_auth_schema(url: str) -> None:
+    """0004 built the users / sessions / login-state tables (named columns catch drift)."""
+    engine = create_async_engine(url)
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(
+                text(
+                    "SELECT id, authentik_sub, username, email, is_owner, created_at, updated_at "
+                    "FROM users"
+                )
+            )
+            await conn.execute(
+                text(
+                    "SELECT session_token_hash, user_id, created_at, expires_at, last_seen_at "
+                    "FROM user_sessions"
+                )
+            )
+            await conn.execute(
+                text(
+                    "SELECT state_hash, nonce, code_verifier, redirect_to, created_at, expires_at "
+                    "FROM oidc_login_state"
+                )
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _assert_audit_log_is_immutable(url: str) -> None:
+    """The trigger rejects UPDATE/DELETE on audit_log; the CHECK was widened to the new actions.
+
+    The probe row uses an ORIGINAL action so it survives the downgrade's narrowed CHECK (and the
+    trigger blocks deleting it). The widening is confirmed from the catalog, not a new-action row.
+    """
+    engine = create_async_engine(url)
+    insert = text(
+        "INSERT INTO audit_log "
+        "(occurred_at, action, severity, result, actor, meta, prev_hash, entry_hash) "
+        "VALUES (now(), 'setup_token.issued', 'info', 'success', 'system', '{}', :p, :e)"
+    )
+    marker = {"p": "0" * 64, "e": "a" * 64}
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(insert, marker)
+        with pytest.raises(DBAPIError):  # UPDATE blocked by the immutability trigger
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text("UPDATE audit_log SET actor = 'x' WHERE entry_hash = :e"),
+                    {"e": marker["e"]},
+                )
+        with pytest.raises(DBAPIError):  # DELETE blocked too
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text("DELETE FROM audit_log WHERE entry_hash = :e"), {"e": marker["e"]}
+                )
+        async with engine.connect() as conn:
+            defn = (
+                await conn.execute(
+                    text(
+                        "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = "
+                        "'auditaction' AND conrelid = 'audit_log'::regclass"
+                    )
+                )
+            ).scalar_one()
+        assert "oidc.login.succeeded" in defn
+        assert "audit.chain.verification_failed" in defn
+    finally:
+        await engine.dispose()
+
+
 def test_upgrade_downgrade_roundtrip() -> None:
     settings = Settings()
     cfg = build_config(settings)
@@ -70,6 +140,8 @@ def test_upgrade_downgrade_roundtrip() -> None:
     # Prove the upgrade actually built the schema (not a silent no-op).
     asyncio.run(_assert_setup_state_queryable(settings.database_url))
     asyncio.run(_assert_audit_schema(settings.database_url))
+    asyncio.run(_assert_auth_schema(settings.database_url))
+    asyncio.run(_assert_audit_log_is_immutable(settings.database_url))
 
     command.downgrade(cfg, "base")
     command.upgrade(cfg, "head")

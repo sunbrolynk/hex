@@ -50,6 +50,20 @@ class Settings(BaseSettings):
     # HMAC key for the tamper-evident audit-log hash chain (integrity, not encryption).
     audit_key: SecretStr = SecretStr("")
 
+    # Authentik OIDC (relying-party login). Optional until first-run bootstrap wires them (Slice 3);
+    # when unset the /auth surface reports "not configured" rather than refusing to boot.
+    authentik_base_url: str = ""
+    # Server-to-server base for token + JWKS fetch from inside the container; defaults to the public
+    # base. Set it when the browser-facing URL differs from HEx's (Docker split-horizon).
+    authentik_internal_base_url: str = ""
+    authentik_oidc_client_id: str = ""
+    authentik_oidc_client_secret: SecretStr = SecretStr("")
+    authentik_oidc_app_slug: str = "hex"
+
+    # Server-side session + OIDC login-flow lifetimes.
+    session_lifetime_seconds: int = 60 * 60 * 8
+    oidc_login_state_ttl_seconds: int = 600
+
     @property
     def database_url(self) -> str:
         """Async SQLAlchemy DSN. Credentials are percent-encoded; never log this."""
@@ -58,6 +72,25 @@ class Settings(BaseSettings):
         return (
             f"postgresql+asyncpg://{user}:{password}@{self.db_host}:{self.db_port}/{self.db_name}"
         )
+
+    @property
+    def oidc_configured(self) -> bool:
+        """True once the Authentik OIDC client trio is set — login is available."""
+        return bool(
+            self.authentik_base_url
+            and self.authentik_oidc_client_id
+            and self.authentik_oidc_client_secret.get_secret_value()
+        )
+
+    @property
+    def authentik_server_base_url(self) -> str:
+        """Base URL HEx uses for server-side token/JWKS calls (falls back to the public base)."""
+        return self.authentik_internal_base_url or self.authentik_base_url
+
+    @property
+    def session_cookie_secure(self) -> bool:
+        """Secure cookie in production; off in dev so it sets over http://localhost."""
+        return self.env == "production"
 
 
 @lru_cache
