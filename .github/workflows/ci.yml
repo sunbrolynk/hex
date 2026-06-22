@@ -49,13 +49,13 @@ jobs:
         run: uv run pyright
       - name: Tests + coverage gate
         run: uv run pytest --cov-report=xml   # --cov/--cov-fail-under come from pyproject addopts
-      - name: Security-critical coverage gate (secrets + setup + audit + oidc/auth >= 95%)
+      - name: Security-critical coverage gate (secrets + setup + audit + oidc/auth + authentik >= 95%)
         # grep guards against a silent no-op if the include glob ever matches zero files.
         run: |
           set -o pipefail
           uv run coverage report \
-            --include='*/hex/secrets/*,*/hex/setup/*,*/hex/audit/*,*/hex/oidc/*,*/hex/database/setup_manager.py,*/hex/database/audit_manager.py,*/hex/database/user_manager.py,*/hex/database/session_manager.py,*/hex/database/login_state_manager.py,*/hex/api/auth_routes/*' \
-            --fail-under=95 | grep -E 'hex/secrets|hex/setup|hex/audit|hex/oidc|setup_manager|audit_manager|user_manager|session_manager|login_state_manager|auth_routes'
+            --include='*/hex/secrets/*,*/hex/setup/*,*/hex/audit/*,*/hex/oidc/*,*/hex/authentik/admin_client.py,*/hex/authentik/errors.py,*/hex/database/setup_manager.py,*/hex/database/audit_manager.py,*/hex/database/user_manager.py,*/hex/database/session_manager.py,*/hex/database/login_state_manager.py,*/hex/api/auth_routes/*' \
+            --fail-under=95 | grep -E 'hex/secrets|hex/setup|hex/audit|hex/oidc|hex/authentik|setup_manager|audit_manager|user_manager|session_manager|login_state_manager|auth_routes'
       - name: Migration round-trip (Postgres)
         # Scoped env (not job-level) so the weak DB password never reaches the rest of the
         # suite's secret validation. --no-cov keeps the coverage report above intact.
