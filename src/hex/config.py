@@ -3,7 +3,7 @@
 from functools import lru_cache
 from urllib.parse import quote
 
-from pydantic import SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,7 +15,11 @@ class Settings(BaseSettings):
     errors instead of pydantic's. Authentik-wiring fields arrive with their slices.
     """
 
-    model_config = SettingsConfigDict(env_prefix="HEX_", env_file=".env", extra="ignore")
+    # populate_by_name lets programmatic construction use field names even where a
+    # validation_alias is set for env reading (e.g. the shared bootstrap token).
+    model_config = SettingsConfigDict(
+        env_prefix="HEX_", env_file=".env", extra="ignore", populate_by_name=True
+    )
 
     env: str = "production"
 
@@ -59,6 +63,14 @@ class Settings(BaseSettings):
     authentik_oidc_client_id: str = ""
     authentik_oidc_client_secret: SecretStr = SecretStr("")
     authentik_oidc_app_slug: str = "hex"
+    # Authentik's first-start API credential, used only during bootstrap to verify/finish wiring
+    # and then rotated to HEx's own scoped service-account token (Slice 3a). Shared with the
+    # bundled Authentik via the unprefixed AUTHENTIK_BOOTSTRAP_TOKEN; HEX_-prefixed overrides it.
+    # validation_alias bypasses env_prefix, so the HEx-prefixed name is listed explicitly.
+    authentik_bootstrap_token: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices("HEX_AUTHENTIK_BOOTSTRAP_TOKEN", "AUTHENTIK_BOOTSTRAP_TOKEN"),
+    )
 
     # Server-side session + OIDC login-flow lifetimes.
     session_lifetime_seconds: int = 60 * 60 * 8
