@@ -91,17 +91,21 @@ async def _assert_auth_schema(url: str) -> None:
 
 
 async def _assert_audit_log_is_immutable(url: str) -> None:
-    """The widened CHECK accepts new actions, and the trigger rejects UPDATE/DELETE on audit_log."""
+    """The trigger rejects UPDATE/DELETE on audit_log; the CHECK was widened to the new actions.
+
+    The probe row uses an ORIGINAL action so it survives the downgrade's narrowed CHECK (and the
+    trigger blocks deleting it). The widening is confirmed from the catalog, not a new-action row.
+    """
     engine = create_async_engine(url)
     insert = text(
         "INSERT INTO audit_log "
         "(occurred_at, action, severity, result, actor, meta, prev_hash, entry_hash) "
-        "VALUES (now(), 'oidc.login.succeeded', 'notice', 'success', 'system', '{}', :p, :e)"
+        "VALUES (now(), 'setup_token.issued', 'info', 'success', 'system', '{}', :p, :e)"
     )
     marker = {"p": "0" * 64, "e": "a" * 64}
     try:
         async with engine.begin() as conn:
-            await conn.execute(insert, marker)  # widened CHECK accepts oidc.login.succeeded
+            await conn.execute(insert, marker)
         with pytest.raises(DBAPIError):  # UPDATE blocked by the immutability trigger
             async with engine.begin() as conn:
                 await conn.execute(
@@ -113,6 +117,17 @@ async def _assert_audit_log_is_immutable(url: str) -> None:
                 await conn.execute(
                     text("DELETE FROM audit_log WHERE entry_hash = :e"), {"e": marker["e"]}
                 )
+        async with engine.connect() as conn:
+            defn = (
+                await conn.execute(
+                    text(
+                        "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = "
+                        "'auditaction' AND conrelid = 'audit_log'::regclass"
+                    )
+                )
+            ).scalar_one()
+        assert "oidc.login.succeeded" in defn
+        assert "audit.chain.verification_failed" in defn
     finally:
         await engine.dispose()
 
