@@ -5,6 +5,8 @@ read as verified, and an unhealthy/unauthorized Authentik must fail closed rathe
 pass. Those abuse paths carry as much weight here as the happy path.
 """
 
+from typing import Any
+
 import httpx
 import pytest
 import respx
@@ -14,6 +16,7 @@ from hex.authentik import (
     AuthentikUnreachable,
     BlueprintObjectMissing,
     OverprivilegedServiceAccount,
+    VerifyReport,
 )
 
 _BASE = "http://ak.test"
@@ -22,19 +25,19 @@ _API = f"{_BASE}/api/v3"
 _READY = f"{_BASE}/-/health/ready/"
 
 
-def _app() -> dict:
+def _app() -> dict[str, Any]:
     return {"results": [{"slug": "hex", "name": "HEx"}]}
 
 
-def _provider() -> dict:
+def _provider() -> dict[str, Any]:
     return {"results": [{"pk": 7, "name": "HEx web BFF", "client_id": "abc123"}]}
 
 
-def _group() -> dict:
+def _group() -> dict[str, Any]:
     return {"results": [{"pk": 3, "name": "HEx Provisioners", "is_superuser": False}]}
 
 
-def _sa(*, is_superuser: bool = False) -> dict:
+def _sa(*, is_superuser: bool = False) -> dict[str, Any]:
     return {
         "results": [
             {
@@ -57,7 +60,7 @@ def _mock_objects(*, sa_superuser: bool = False) -> None:
     )
 
 
-async def _verify(*, sa_superuser: bool = False):
+async def _verify(*, sa_superuser: bool = False) -> VerifyReport:
     async with httpx.AsyncClient() as http:
         client = AuthentikAdminClient(_BASE, _TOKEN, http)
         return await client.verify(
