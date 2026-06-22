@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 from pydantic import SecretStr
 
-from hex.config import Settings
+from hex.oidc.config import OIDCConfig
 
 BASE = "http://auth.test"
 SLUG = "hex"
@@ -29,14 +29,14 @@ _PRIV = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 _OTHER = rsa.generate_private_key(public_exponent=65537, key_size=2048)  # for signature-mismatch
 
 
-def settings_oidc(**overrides: Any) -> Settings:
+def oidc_config(**overrides: Any) -> OIDCConfig:
     base: dict[str, Any] = {
         "authentik_base_url": BASE,
         "authentik_oidc_client_id": CLIENT_ID,
         "authentik_oidc_client_secret": SecretStr("client-secret"),
         "authentik_oidc_app_slug": SLUG,
     }
-    return Settings(**(base | overrides))
+    return OIDCConfig(**(base | overrides))
 
 
 def discovery_doc(**overrides: Any) -> dict[str, Any]:

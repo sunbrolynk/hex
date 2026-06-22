@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 import httpx
 import jwt
 
-from hex.config import Settings
+from hex.oidc.config import OIDCConfig
 from hex.oidc.discovery import DiscoveryCache, OIDCDiscovery
 from hex.oidc.errors import OIDCExchangeError, OIDCNotConfigured, OIDCValidationError
 
@@ -27,24 +27,24 @@ class OIDCClaims:
 
 
 class OIDCClient:
-    """Stateless relying-party helper; safe as an app-wide singleton."""
+    """Stateless relying-party helper; built per request from the resolved config."""
 
-    def __init__(self, settings: Settings, http: httpx.AsyncClient, cache: DiscoveryCache) -> None:
-        self._settings = settings
+    def __init__(self, config: OIDCConfig, http: httpx.AsyncClient, cache: DiscoveryCache) -> None:
+        self._config = config
         self._http = http
         self._cache = cache
 
     @property
     def configured(self) -> bool:
-        return self._settings.oidc_configured
+        return self._config.oidc_configured
 
     async def _discovery(self) -> OIDCDiscovery:
         if not self.configured:
             raise OIDCNotConfigured("Authentik OIDC client is not configured")
         return await self._cache.get(
-            self._settings.authentik_base_url,
-            self._settings.authentik_server_base_url,
-            self._settings.authentik_oidc_app_slug,
+            self._config.authentik_base_url,
+            self._config.authentik_server_base_url,
+            self._config.authentik_oidc_app_slug,
         )
 
     async def authorize_url(
@@ -54,7 +54,7 @@ class OIDCClient:
         disco = await self._discovery()
         params = {
             "response_type": "code",
-            "client_id": self._settings.authentik_oidc_client_id,
+            "client_id": self._config.authentik_oidc_client_id,
             "redirect_uri": redirect_uri,
             "scope": _SCOPES,
             "state": state,
@@ -73,8 +73,8 @@ class OIDCClient:
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": redirect_uri,
-            "client_id": self._settings.authentik_oidc_client_id,
-            "client_secret": self._settings.authentik_oidc_client_secret.get_secret_value(),
+            "client_id": self._config.authentik_oidc_client_id,
+            "client_secret": self._config.authentik_oidc_client_secret.get_secret_value(),
             "code_verifier": code_verifier,
         }
         try:
@@ -97,7 +97,7 @@ class OIDCClient:
                 id_token,
                 key.key,
                 algorithms=["RS256"],  # rejects alg=none and any non-RS256
-                audience=self._settings.authentik_oidc_client_id,
+                audience=self._config.authentik_oidc_client_id,
                 issuer=disco.issuer,
                 leeway=_LEEWAY_SECONDS,
                 options={"require": ["exp", "iat", "aud", "iss", "sub"]},

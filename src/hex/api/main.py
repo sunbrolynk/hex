@@ -18,7 +18,7 @@ from hex.config import Settings, get_settings
 from hex.database import AuditLogManager, SetupStateManager, build_engine, build_sessionmaker
 from hex.database.migrate import assert_at_head, upgrade_to_head
 from hex.database.models import AuditAction, AuditResult, AuditSeverity
-from hex.oidc import DiscoveryCache, OIDCClient
+from hex.oidc import DiscoveryCache
 from hex.secrets import broker_from_settings, validate_secrets
 from hex.setup import AttemptLimiter, LockoutCounter
 
@@ -53,7 +53,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.setup_lockout = LockoutCounter()
     app.state.http = httpx.AsyncClient(timeout=10.0)
-    app.state.oidc = OIDCClient(settings, app.state.http, DiscoveryCache(app.state.http))
+    # Shared discovery/JWKS cache; the OIDC client is built per request from resolved config.
+    app.state.discovery_cache = DiscoveryCache(app.state.http)
     app.include_router(system_router)
     app.include_router(auth_router)
     _mount_spa(app, settings)

@@ -5,6 +5,7 @@ from hex.authentik.errors import (
     BlueprintObjectMissing,
     OverprivilegedServiceAccount,
 )
+from hex.authentik.runtime_config import resolve_oidc_config
 
 __all__ = [
     "AuthentikAdminClient",
@@ -13,4 +14,5 @@ __all__ = [
     "BlueprintObjectMissing",
     "OverprivilegedServiceAccount",
     "VerifyReport",
+    "resolve_oidc_config",
 ]

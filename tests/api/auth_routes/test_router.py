@@ -14,7 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from hex.api.auth_routes.router import _safe_redirect
 from hex.api.main import create_app
 from hex.config import Settings
-from hex.database import AuditLogManager, LoginStateManager, UserSession
+from hex.database import (
+    AuditLogManager,
+    AuthentikIntegrationManager,
+    LoginStateManager,
+    UserSession,
+)
 from hex.database.models import AuditLogEntry, OIDCLoginState
 from tests.conftest import make_settings
 from tests.oidc import _oidc
@@ -119,6 +124,61 @@ async def test_login_unconfigured_returns_503(
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         resp = await ac.get("/auth/login", follow_redirects=False)
     assert resp.status_code == 503
+
+
+@respx.mock
+async def test_login_uses_db_wired_config_when_env_is_empty(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    """The headline: with NO HEX_AUTHENTIK_* env, a bootstrap-wired DB row makes login work."""
+    respx.get(_oidc.DISCOVERY_URL).mock(
+        return_value=httpx.Response(200, json=_oidc.discovery_doc())
+    )
+    app = create_app(make_settings(env="dev"))  # env has no OIDC trio
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    broker = app.state.secrets
+    async with sessionmaker() as session:
+        await AuthentikIntegrationManager(session).set_oidc(
+            base_url=_oidc.BASE,
+            internal_base_url="",
+            client_id=_oidc.CLIENT_ID,
+            client_secret_enc=broker.encrypt("client-secret"),
+            provider_pk=1,
+            app_slug=_oidc.SLUG,
+            sa_token_enc=broker.encrypt("sa-token"),
+        )
+        await session.commit()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.get("/auth/login", follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers["location"].startswith(_oidc.AUTHORIZE_URL)
+
+
+@respx.mock
+async def test_login_fails_closed_when_db_secret_undecryptable(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    """A persisted secret that won't decrypt (rotated/wrong KEK or tamper) → clean 503, not 500."""
+    app = create_app(make_settings(env="dev"))
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    async with sessionmaker() as session:
+        await AuthentikIntegrationManager(session).set_oidc(
+            base_url=_oidc.BASE,
+            internal_base_url="",
+            client_id=_oidc.CLIENT_ID,
+            client_secret_enc="not-a-decryptable-token",
+            provider_pk=1,
+            app_slug=_oidc.SLUG,
+            sa_token_enc="x",
+        )
+        await session.commit()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.get("/auth/login", follow_redirects=False)
+    assert resp.status_code == 503  # fail-secure: treated as unconfigured, no stack leak
 
 
 @respx.mock
