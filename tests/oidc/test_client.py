@@ -6,11 +6,11 @@ import httpx
 import pytest
 import respx
 
-from hex.config import Settings
 from hex.oidc import (
     DiscoveryCache,
     OIDCClaims,
     OIDCClient,
+    OIDCConfig,
     OIDCExchangeError,
     OIDCNotConfigured,
     OIDCValidationError,
@@ -24,7 +24,7 @@ async def _exchange(
     *,
     id_token: str,
     nonce: str = _oidc.NONCE,
-    settings: Settings | None = None,
+    config: OIDCConfig | None = None,
     jwks: dict[str, Any] | None = None,
     token_status: int = 200,
 ) -> OIDCClaims:
@@ -36,7 +36,7 @@ async def _exchange(
     body = {"id_token": id_token, "access_token": "a", "token_type": "Bearer"}
     respx.post(_oidc.TOKEN_URL).mock(return_value=httpx.Response(token_status, json=body))
     async with httpx.AsyncClient() as http:
-        client = OIDCClient(settings or _oidc.settings_oidc(), http, DiscoveryCache(http))
+        client = OIDCClient(config or _oidc.oidc_config(), http, DiscoveryCache(http))
         return await client.exchange_code(
             code="auth-code", code_verifier="verifier", redirect_uri=_REDIRECT, nonce=nonce
         )
@@ -48,7 +48,7 @@ async def test_authorize_url_carries_code_flow_params() -> None:
         return_value=httpx.Response(200, json=_oidc.discovery_doc())
     )
     async with httpx.AsyncClient() as http:
-        client = OIDCClient(_oidc.settings_oidc(), http, DiscoveryCache(http))
+        client = OIDCClient(_oidc.oidc_config(), http, DiscoveryCache(http))
         url = await client.authorize_url(
             state="st", nonce="no", code_challenge="ch", redirect_uri=_REDIRECT
         )
@@ -131,6 +131,6 @@ async def test_token_endpoint_error_is_clean() -> None:
 
 
 async def test_unconfigured_client_raises() -> None:
-    client = OIDCClient(Settings(), httpx.AsyncClient(), DiscoveryCache(httpx.AsyncClient()))
+    client = OIDCClient(OIDCConfig(), httpx.AsyncClient(), DiscoveryCache(httpx.AsyncClient()))
     with pytest.raises(OIDCNotConfigured):
         await client.authorize_url(state="s", nonce="n", code_challenge="c", redirect_uri=_REDIRECT)

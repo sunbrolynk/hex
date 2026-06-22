@@ -1,13 +1,38 @@
 """Auth dependencies. Identity comes from the server-side session cookie — never a header."""
 
+import logging
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hex.database import SessionManager, User, get_session
+from hex.authentik import resolve_oidc_config
+from hex.database import AuthentikIntegrationManager, SessionManager, User, get_session
+from hex.oidc import OIDCClient, OIDCConfig
+from hex.secrets import InvalidToken
 
 SESSION_COOKIE = "hex_session"
+log = logging.getLogger("hex.auth")
+
+
+async def get_oidc_client(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> OIDCClient:
+    """Build the OIDC client from the per-request resolved config (env over DB-wired).
+
+    Fail-secure: if a persisted client secret can't be decrypted (wrong/rotated KEK), treat the
+    integration as unconfigured so login returns a clean 503, never a 500 that leaks a stack.
+    """
+    integration = await AuthentikIntegrationManager(session).get()
+    try:
+        config = resolve_oidc_config(
+            request.app.state.settings, integration, request.app.state.secrets
+        )
+    except InvalidToken:
+        log.error("persisted Authentik client secret failed to decrypt — treating as unconfigured")
+        config = OIDCConfig()
+    return OIDCClient(config, request.app.state.http, request.app.state.discovery_cache)
 
 
 async def require_user(

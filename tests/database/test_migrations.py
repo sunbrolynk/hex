@@ -132,6 +132,29 @@ async def _assert_audit_log_is_immutable(url: str) -> None:
         await engine.dispose()
 
 
+async def _assert_authentik_integration_schema(url: str) -> None:
+    """0005 built the runtime-wired Authentik integration singleton (named columns catch drift)."""
+    engine = create_async_engine(url)
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(
+                text(
+                    "SELECT id, base_url, internal_base_url, client_id, client_secret_enc, "
+                    "provider_pk, sa_token_enc, app_slug, wired_at, created_at, updated_at "
+                    "FROM authentik_integration"
+                )
+            )
+            result = await conn.execute(
+                text(
+                    "SELECT conname FROM pg_constraint WHERE conname = "
+                    "'ck_authentik_integration_singleton'"
+                )
+            )
+            assert {row[0] for row in result} == {"ck_authentik_integration_singleton"}
+    finally:
+        await engine.dispose()
+
+
 def test_upgrade_downgrade_roundtrip() -> None:
     settings = Settings()
     cfg = build_config(settings)
@@ -142,6 +165,7 @@ def test_upgrade_downgrade_roundtrip() -> None:
     asyncio.run(_assert_audit_schema(settings.database_url))
     asyncio.run(_assert_auth_schema(settings.database_url))
     asyncio.run(_assert_audit_log_is_immutable(settings.database_url))
+    asyncio.run(_assert_authentik_integration_schema(settings.database_url))
 
     command.downgrade(cfg, "base")
     command.upgrade(cfg, "head")

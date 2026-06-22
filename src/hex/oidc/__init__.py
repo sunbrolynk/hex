@@ -1,4 +1,5 @@
 from hex.oidc.client import OIDCClaims, OIDCClient
+from hex.oidc.config import OIDCConfig
 from hex.oidc.discovery import DiscoveryCache, OIDCDiscovery
 from hex.oidc.errors import (
     OIDCDiscoveryError,
@@ -13,6 +14,7 @@ __all__ = [
     "DiscoveryCache",
     "OIDCClaims",
     "OIDCClient",
+    "OIDCConfig",
     "OIDCDiscovery",
     "OIDCDiscoveryError",
     "OIDCError",

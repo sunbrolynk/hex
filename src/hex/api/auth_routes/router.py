@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hex.api.auth_routes.dependencies import SESSION_COOKIE, require_user
+from hex.api.auth_routes.dependencies import SESSION_COOKIE, get_oidc_client, require_user
 from hex.api.schemas import UserResponse
 from hex.database import (
     AuditLogManager,
@@ -48,10 +48,10 @@ def _callback_url(request: Request) -> str:
 async def auth_login(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
+    oidc: Annotated[OIDCClient, Depends(get_oidc_client)],
     next: str = "/",
 ) -> RedirectResponse:
     """Begin the Authorization-Code flow: stash one-time state, redirect to Authentik."""
-    oidc: OIDCClient = request.app.state.oidc
     if not oidc.configured:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="OIDC not configured"
@@ -80,12 +80,12 @@ async def auth_login(
 async def auth_callback(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
+    oidc: Annotated[OIDCClient, Depends(get_oidc_client)],
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
 ) -> RedirectResponse:
     """Validate state, exchange the code server-side, create a session, set the cookie."""
-    oidc: OIDCClient = request.app.state.oidc
     settings = request.app.state.settings
     actor = f"client:{request.client.host if request.client else 'unknown'}"
     audit = AuditLogManager(session, request.app.state.audit_signer)

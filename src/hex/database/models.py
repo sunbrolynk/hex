@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, String, func
+from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, String, Text, func
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -167,3 +167,30 @@ class OIDCLoginState(Base):
     redirect_to: Mapped[str] = mapped_column(String(512), default="/")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AuthentikIntegration(Base):
+    """Singleton row holding the runtime-wired Authentik config (bootstrap fills it, Slice 3a-2).
+
+    Secrets are stored as broker-encrypted envelope tokens, never plaintext (non-negotiable #4).
+    Env (``Settings``) overrides every field at resolve time, so external-mode operators never
+    touch this row. ``client_id`` is public; only ``*_enc`` columns hold secrets.
+    """
+
+    __tablename__ = "authentik_integration"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_authentik_integration_singleton"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    base_url: Mapped[str] = mapped_column(String(512), default="")
+    internal_base_url: Mapped[str] = mapped_column(String(512), default="")
+    client_id: Mapped[str] = mapped_column(String(255), default="")
+    client_secret_enc: Mapped[str | None] = mapped_column(Text, default=None)
+    provider_pk: Mapped[int | None] = mapped_column(default=None)
+    sa_token_enc: Mapped[str | None] = mapped_column(Text, default=None)
+    app_slug: Mapped[str] = mapped_column(String(128), default="hex")
+    # Set when bootstrap completes the wiring (rotation + persist); null until then.
+    wired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

@@ -1,4 +1,5 @@
 from hex.database.audit_manager import AuditLogManager
+from hex.database.authentik_integration_manager import AuthentikIntegrationManager
 from hex.database.database import (
     build_engine,
     build_sessionmaker,
@@ -11,6 +12,7 @@ from hex.database.models import (
     AuditLogEntry,
     AuditResult,
     AuditSeverity,
+    AuthentikIntegration,
     Base,
     OIDCLoginState,
     SetupPhase,
@@ -29,6 +31,8 @@ __all__ = [
     "AuditLogManager",
     "AuditResult",
     "AuditSeverity",
+    "AuthentikIntegration",
+    "AuthentikIntegrationManager",
     "Base",
     "LoginStateManager",
     "OIDCLoginState",
