@@ -7,11 +7,13 @@ protected route fails closed during first run rather than relying on the fronten
 
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hex.database import SetupStateManager, get_session
 from hex.database.models import SetupPhase
+
+BOOTSTRAP_COOKIE = "hex_bootstrap"
 
 
 async def forbid_until_setup_complete(
@@ -33,4 +35,20 @@ async def require_bootstrap_phase(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Authentik wiring is only available during bootstrap.",
+        )
+
+
+async def require_bootstrap_session(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> None:
+    """Require the bootstrap-session cookie minted at unlock — proof the caller unlocked.
+
+    Binds the bootstrap-only endpoints (wire, owner claim) to whoever passed the setup token, not
+    merely anyone reaching the surface during the open window. Server-side; never client-trusting.
+    """
+    token = request.cookies.get(BOOTSTRAP_COOKIE)
+    if not await SetupStateManager(session).verify_bootstrap_session(token):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="bootstrap session required"
         )
