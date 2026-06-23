@@ -28,7 +28,10 @@ async def _assert_setup_state_queryable(url: str) -> None:
         async with engine.connect() as conn:
             # Name the 0002 columns explicitly so a no-op add-column migration would fail here.
             await conn.execute(
-                text("SELECT id, phase, setup_token_hash, setup_token_issued_at FROM setup_state")
+                text(
+                    "SELECT id, phase, setup_token_hash, setup_token_issued_at, "
+                    "bootstrap_session_hash FROM setup_state"
+                )
             )
     finally:
         await engine.dispose()
@@ -131,6 +134,7 @@ async def _assert_audit_log_is_immutable(url: str) -> None:
         # 0006 widened the CHECK for the wiring + rotation events.
         assert "authentik.wiring.succeeded" in defn
         assert "bootstrap.token.rotated" in defn
+        assert "owner.claimed" in defn  # 0007
     finally:
         await engine.dispose()
 

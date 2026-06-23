@@ -48,3 +48,13 @@ async def require_user(
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="not authenticated")
     return user
+
+
+async def require_owner(user: Annotated[User, Depends(require_user)]) -> User:
+    """Require the authenticated user to be the owner. The owner/user boundary is server-enforced.
+
+    Never trusts a client-supplied role; ``is_owner`` is read from the server-side user record.
+    """
+    if not user.is_owner:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="owner only")
+    return user

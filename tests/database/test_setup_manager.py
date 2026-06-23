@@ -17,6 +17,7 @@ from hex.database.models import (
     AuditSeverity,
     SetupPhase,
     SetupState,
+    User,
 )
 from hex.setup import hash_token
 
@@ -112,19 +113,23 @@ async def test_begin_bootstrap_advances_on_correct_token(db_session: AsyncSessio
     token = await manager.issue_setup_token()
     assert token is not None
 
-    assert await manager.begin_bootstrap(token) is True
+    session_token = await manager.begin_bootstrap(token)
+    assert session_token is not None
     assert await manager.current_phase() is SetupPhase.BOOTSTRAP
 
     state = await db_session.get(SetupState, 1)
     assert state is not None
     assert state.setup_token_hash is None  # single-use: consumed on success
+    # A bootstrap session is minted; only its hash is stored, and it matches the returned token.
+    assert state.bootstrap_session_hash == hash_token(session_token)
+    assert state.bootstrap_session_hash != session_token
 
 
 async def test_begin_bootstrap_rejects_wrong_token(db_session: AsyncSession) -> None:
     manager = SetupStateManager(db_session)
     await manager.issue_setup_token()
 
-    assert await manager.begin_bootstrap("not-the-token") is False
+    assert await manager.begin_bootstrap("not-the-token") is None
     assert await manager.current_phase() is SetupPhase.FIRST_RUN  # no state change
 
 
@@ -132,7 +137,7 @@ async def test_begin_bootstrap_rejects_when_no_token_issued(db_session: AsyncSes
     manager = SetupStateManager(db_session)
     await manager.get_or_create()  # FIRST_RUN but no token minted
 
-    assert await manager.begin_bootstrap("anything") is False
+    assert await manager.begin_bootstrap("anything") is None
     assert await manager.current_phase() is SetupPhase.FIRST_RUN
 
 
@@ -141,10 +146,10 @@ async def test_begin_bootstrap_is_completion_bound(db_session: AsyncSession) -> 
     manager = SetupStateManager(db_session)
     token = await manager.issue_setup_token()
     assert token is not None
-    assert await manager.begin_bootstrap(token) is True
+    assert await manager.begin_bootstrap(token) is not None
 
     # A replay of the same token after advancing must not move the phase.
-    assert await manager.begin_bootstrap(token) is False
+    assert await manager.begin_bootstrap(token) is None
     assert await manager.current_phase() is SetupPhase.BOOTSTRAP
 
 
@@ -159,7 +164,8 @@ async def test_begin_bootstrap_is_single_use_across_sessions(
     async with sessionmaker() as s1, sessionmaker() as s2:
         first = await SetupStateManager(s1).begin_bootstrap(token)
         second = await SetupStateManager(s2).begin_bootstrap(token)
-    assert sorted([first, second]) == [False, True]
+    # Exactly one unlock wins (returns a session token); the other gets None.
+    assert (first is None) != (second is None)
 
 
 async def test_issue_setup_token_audits_issuance(db_session: AsyncSession) -> None:
@@ -182,7 +188,7 @@ async def test_begin_bootstrap_audits_success_with_actor(db_session: AsyncSessio
     token = await manager.issue_setup_token(audit)
     assert token is not None
 
-    assert await manager.begin_bootstrap(token, audit, actor="client:1.2.3.4") is True
+    assert await manager.begin_bootstrap(token, audit, actor="client:1.2.3.4") is not None
     rows = (
         (await db_session.execute(select(AuditLogEntry).order_by(AuditLogEntry.id))).scalars().all()
     )
@@ -192,6 +198,120 @@ async def test_begin_bootstrap_audits_success_with_actor(db_session: AsyncSessio
     ]
     assert rows[1].actor == "client:1.2.3.4"
     assert rows[1].severity is AuditSeverity.NOTICE
+
+
+async def _unlock(manager: SetupStateManager) -> str:
+    """Issue + consume a token, returning the bootstrap session token."""
+    token = await manager.issue_setup_token()
+    assert token is not None
+    session_token = await manager.begin_bootstrap(token)
+    assert session_token is not None
+    return session_token
+
+
+async def _add_user(session: AsyncSession, sub: str) -> int:
+    user = User(authentik_sub=sub, username=sub, email=None)
+    session.add(user)
+    await session.flush()
+    return user.id
+
+
+async def test_verify_bootstrap_session_matches_minted_token(db_session: AsyncSession) -> None:
+    manager = SetupStateManager(db_session)
+    session_token = await _unlock(manager)
+    assert await manager.verify_bootstrap_session(session_token) is True
+    assert await manager.verify_bootstrap_session("wrong-session") is False
+    assert await manager.verify_bootstrap_session(None) is False
+
+
+async def test_verify_bootstrap_session_false_before_unlock(db_session: AsyncSession) -> None:
+    manager = SetupStateManager(db_session)
+    await manager.get_or_create()  # FIRST_RUN, no bootstrap session minted yet
+    assert await manager.verify_bootstrap_session("anything") is False
+
+
+async def test_complete_setup_claims_owner_advances_and_clears_session(
+    db_session: AsyncSession,
+) -> None:
+    manager = SetupStateManager(db_session)
+    await _unlock(manager)
+    uid = await _add_user(db_session, "owner-sub")
+    audit = AuditLogManager(db_session, _signer())
+
+    assert await manager.complete_setup(uid, audit, actor=f"user:{uid}") is True
+    assert await manager.current_phase() is SetupPhase.COMPLETE
+
+    user = await db_session.get(User, uid)
+    assert user is not None and user.is_owner is True
+    state = await db_session.get(SetupState, 1)
+    assert state is not None and state.bootstrap_session_hash is None  # cleared on completion
+    rows = await _actions(db_session)
+    assert AuditAction.OWNER_CLAIMED in rows
+
+
+async def test_complete_setup_refused_outside_bootstrap(db_session: AsyncSession) -> None:
+    manager = SetupStateManager(db_session)
+    await manager.get_or_create()  # FIRST_RUN, never unlocked
+    uid = await _add_user(db_session, "u")
+    assert await manager.complete_setup(uid) is False
+    assert await manager.current_phase() is SetupPhase.FIRST_RUN
+
+    user = await db_session.get(User, uid)
+    assert user is not None and user.is_owner is False
+
+
+async def test_complete_setup_refused_for_unknown_user(db_session: AsyncSession) -> None:
+    """A claim for a non-existent user never completes setup — no ownerless COMPLETE."""
+    manager = SetupStateManager(db_session)
+    await _unlock(manager)
+    assert await manager.complete_setup(999_999) is False
+    await db_session.rollback()  # the caller's txn rolls back the uncommitted phase flip
+    assert await manager.current_phase() is SetupPhase.BOOTSTRAP
+
+
+async def test_complete_setup_is_single_use_across_sessions(
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Two concurrent claims yield exactly one owner — the atomic phase flip."""
+    async with sessionmaker() as s:
+        manager = SetupStateManager(s)
+        await _unlock(manager)
+        uid1 = await _add_user(s, "a")
+        uid2 = await _add_user(s, "b")
+        await s.commit()
+
+    async with sessionmaker() as s1, sessionmaker() as s2:
+        first = await SetupStateManager(s1).complete_setup(uid1)
+        second = await SetupStateManager(s2).complete_setup(uid2)
+    assert sorted([first, second]) == [False, True]
+
+    # Exactly one user ends up the owner; the loser of the race is never marked.
+    async with sessionmaker() as s:
+        owners = await s.scalar(
+            select(func.count()).select_from(User).where(User.is_owner.is_(True))
+        )
+        assert owners == 1
+
+
+async def test_complete_setup_lost_race_sets_no_owner(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the phase flips between the read and the atomic UPDATE, claim fails and sets no owner."""
+    manager = SetupStateManager(db_session)
+    state = await manager.get_or_create()
+    state.phase = SetupPhase.COMPLETE  # real row already past BOOTSTRAP → UPDATE matches 0 rows
+    await db_session.commit()
+    uid = await _add_user(db_session, "racer")
+
+    # Make the top phase-check see BOOTSTRAP (as if another txn flipped it right after our read).
+    async def stale_read() -> SetupState:
+        return SetupState(id=1, phase=SetupPhase.BOOTSTRAP)
+
+    monkeypatch.setattr(manager, "get_or_create", stale_read)
+    assert await manager.complete_setup(uid) is False
+
+    user = await db_session.get(User, uid)
+    assert user is not None and user.is_owner is False  # fail-secure: no owner on a lost race
 
 
 async def test_burn_setup_token_freezes_and_audits_high(db_session: AsyncSession) -> None:

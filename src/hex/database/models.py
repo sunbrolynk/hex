@@ -48,6 +48,9 @@ class SetupState(Base):
     setup_token_issued_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
+    # SHA-256 of the bootstrap session cookie minted at unlock; proves the caller is the one who
+    # unlocked. Set on BOOTSTRAP entry, cleared when setup completes. Plaintext only in the cookie.
+    bootstrap_session_hash: Mapped[str | None] = mapped_column(String(64), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -69,6 +72,7 @@ class AuditAction(StrEnum):
     AUTHENTIK_WIRING_SUCCEEDED = "authentik.wiring.succeeded"
     AUTHENTIK_WIRING_FAILED = "authentik.wiring.failed"
     BOOTSTRAP_TOKEN_ROTATED = "bootstrap.token.rotated"  # noqa: S105 — action name, not a credential
+    OWNER_CLAIMED = "owner.claimed"
 
 
 class AuditSeverity(StrEnum):

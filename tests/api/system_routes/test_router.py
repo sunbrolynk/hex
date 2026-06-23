@@ -15,19 +15,25 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import StaticPool
 
 from hex.__version__ import __version__
+from hex.api.auth_routes.dependencies import SESSION_COOKIE
+from hex.api.guards import BOOTSTRAP_COOKIE
 from hex.api.main import create_app
 from hex.authentik.names import SA_TOKEN_IDENTIFIER
 from hex.database import (
     AuditLogManager,
     AuthentikIntegrationManager,
+    SessionManager,
     SetupStateManager,
+    User,
     build_sessionmaker,
 )
 from hex.database.models import AuditLogEntry, SetupPhase, SetupState
+from hex.setup import hash_token
 from tests.conftest import make_settings
 
 _AK = "http://ak.test"
 _AK_API = f"{_AK}/api/v3"
+_BOOTSTRAP_TOK = "test-bootstrap-session"  # noqa: S105 — fake cookie value for tests
 
 
 def _mock_authentik_happy() -> None:
@@ -63,6 +69,10 @@ async def _set_phase(sessionmaker: async_sessionmaker[AsyncSession], phase: Setu
     async with sessionmaker() as session:
         state = await SetupStateManager(session).get_or_create()
         state.phase = phase
+        # In BOOTSTRAP, seed the bootstrap-session hash so the cookie-gated endpoints accept the
+        # matching test cookie (clients set BOOTSTRAP_COOKIE=_BOOTSTRAP_TOK).
+        if phase is SetupPhase.BOOTSTRAP:
+            state.bootstrap_session_hash = hash_token(_BOOTSTRAP_TOK)
         await session.commit()
 
 
@@ -333,7 +343,10 @@ async def _wire_app(
     app.state.engine = engine
     app.state.sessionmaker = sessionmaker
     await _set_phase(sessionmaker, phase)
-    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    client = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    if phase is SetupPhase.BOOTSTRAP:
+        client.cookies.set(BOOTSTRAP_COOKIE, _BOOTSTRAP_TOK)
+    return client
 
 
 async def test_wire_succeeds_in_bootstrap_persists_and_audits(
@@ -410,6 +423,7 @@ async def test_wire_without_bootstrap_token_is_502_and_audits_failure(
     app.state.sessionmaker = sessionmaker
     await _set_phase(sessionmaker, SetupPhase.BOOTSTRAP)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        client.cookies.set(BOOTSTRAP_COOKIE, _BOOTSTRAP_TOK)
         resp = await client.post("/setup/wire")
     assert resp.status_code == 502
     async with sessionmaker() as session:
@@ -465,3 +479,132 @@ async def test_setup_unlock_burn_db_error_is_503(
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post("/setup/unlock", json={"token": "x"})
     assert resp.status_code == 503
+
+
+# ── Slice 3b-1: bootstrap session cookie + owner claim ──────────────────────────
+
+
+async def _owner_client(
+    engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    *,
+    phase: SetupPhase = SetupPhase.BOOTSTRAP,
+    is_owner: bool = False,
+    with_bootstrap_cookie: bool = True,
+) -> tuple[AsyncClient, int]:
+    """An app at the given phase + an authenticated client (session cookie, optional bootstrap)."""
+    app = create_app(make_settings(authentik_base_url=_AK, authentik_bootstrap_token="boot-tok"))
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    await _set_phase(sessionmaker, phase)
+    async with sessionmaker() as session:
+        user = User(authentik_sub="owner-sub", username="owner", email="o@x", is_owner=is_owner)
+        session.add(user)
+        await session.flush()
+        raw = await SessionManager(session, lifetime_seconds=3600).create(user)
+        await session.commit()
+        uid = user.id
+    client = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    client.cookies.set(SESSION_COOKIE, raw)
+    if with_bootstrap_cookie and phase is SetupPhase.BOOTSTRAP:
+        client.cookies.set(BOOTSTRAP_COOKIE, _BOOTSTRAP_TOK)
+    return client, uid
+
+
+async def test_unlock_sets_bootstrap_cookie(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    async with sessionmaker() as session:
+        token = await SetupStateManager(session).issue_setup_token()
+    assert token is not None
+    resp = await client.post("/setup/unlock", json={"token": token})
+    assert resp.status_code == 200
+    set_cookie = resp.headers.get("set-cookie", "")
+    assert "hex_bootstrap=" in set_cookie
+    assert "httponly" in set_cookie.lower()
+    assert "samesite=lax" in set_cookie.lower()
+    # The session plaintext lives only in the cookie — never echoed into the JSON body.
+    minted = resp.cookies.get("hex_bootstrap")
+    assert minted and minted not in resp.text
+
+
+async def test_wire_without_bootstrap_cookie_is_403(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    app = create_app(make_settings(authentik_base_url=_AK, authentik_bootstrap_token="boot-tok"))
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    await _set_phase(sessionmaker, SetupPhase.BOOTSTRAP)  # hash seeded, but no cookie sent
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/setup/wire")
+    assert resp.status_code == 403
+
+
+async def test_complete_claims_owner_and_advances(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    client, uid = await _owner_client(engine, sessionmaker)
+    async with client:
+        resp = await client.post("/setup/complete")
+    assert resp.status_code == 200
+    assert resp.json() == {"phase": "complete", "setup_required": False}
+    # The bootstrap cookie is cleared on completion.
+    set_cookie = resp.headers.get("set-cookie", "")
+    assert "hex_bootstrap=" in set_cookie
+    assert "max-age=0" in set_cookie.lower() or "expires=" in set_cookie.lower()
+    async with sessionmaker() as session:
+        user = await session.get(User, uid)
+        assert user is not None and user.is_owner is True
+    assert "owner.claimed" in await _audit_actions(sessionmaker)
+
+
+async def test_complete_rejects_a_wrong_bootstrap_cookie(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    client, _ = await _owner_client(engine, sessionmaker, with_bootstrap_cookie=False)
+    client.cookies.set(BOOTSTRAP_COOKIE, "not-the-session")  # forged value
+    async with client:
+        resp = await client.post("/setup/complete")
+    assert resp.status_code == 403
+
+
+async def test_complete_requires_authentication(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    app = create_app(make_settings())
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    await _set_phase(sessionmaker, SetupPhase.BOOTSTRAP)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        client.cookies.set(BOOTSTRAP_COOKIE, _BOOTSTRAP_TOK)  # bootstrap cookie but no session
+        resp = await client.post("/setup/complete")
+    assert resp.status_code == 401
+
+
+async def test_complete_requires_bootstrap_cookie(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    client, _ = await _owner_client(engine, sessionmaker, with_bootstrap_cookie=False)
+    async with client:
+        resp = await client.post("/setup/complete")
+    assert resp.status_code == 403
+
+
+async def test_complete_rejected_outside_bootstrap(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    client, _ = await _owner_client(engine, sessionmaker, phase=SetupPhase.FIRST_RUN)
+    async with client:
+        resp = await client.post("/setup/complete")
+    assert resp.status_code == 409
+
+
+async def test_complete_is_single_use(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    client, _ = await _owner_client(engine, sessionmaker)
+    async with client:
+        first = await client.post("/setup/complete")
+        second = await client.post("/setup/complete")
+    assert first.status_code == 200
+    assert second.status_code == 409  # phase now COMPLETE → the guard rejects the replay
