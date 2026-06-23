@@ -1,8 +1,8 @@
 import { type FormEvent, useState } from 'react'
-import { unlockSetup } from '../../api/setup'
+import { unlockSetup, wireAuthentik } from '../../api/setup'
 
-// The seed of the owner-setup wizard (owner-setup-wizard-vision): for now, the token gate plus a
-// stub for what comes after unlock. Wrong/throttled/error all surface a generic, non-leaky line.
+// The seed of the owner-setup wizard (owner-setup-wizard-vision): the token gate, then the
+// Authentik wiring step. Wrong/throttled/error all surface a generic, non-leaky line.
 const MESSAGES: Record<'invalid' | 'throttled' | 'locked' | 'error', string> = {
   invalid: 'That setup token was not accepted. Re-check it in the server logs and try again.',
   throttled: 'Too many attempts. Wait a minute, then try again.',
@@ -11,9 +11,56 @@ const MESSAGES: Record<'invalid' | 'throttled' | 'locked' | 'error', string> = {
   error: 'Something went wrong reaching HEx. Try again.',
 }
 
+const WIRE_MESSAGES: Record<'unavailable' | 'failed' | 'error', string> = {
+  unavailable: 'Authentik isn’t reachable yet. Give it a moment, then try again.',
+  failed: 'HEx couldn’t finish configuring Authentik. Check the Authentik logs and retry.',
+  error: 'Something went wrong reaching HEx. Try again.',
+}
+
 interface Props {
   phase: string
   onAdvance: () => void
+}
+
+// After the token unlock, HEx finishes wiring Authentik and rotates onto its own scoped token.
+// Phase stays "bootstrap" until owner setup (Slice 3b) completes; once wired, login is available.
+function WireStep() {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [wired, setWired] = useState(false)
+
+  async function onWire() {
+    setBusy(true)
+    setError(null)
+    const result = await wireAuthentik()
+    setBusy(false)
+    if (result.ok) setWired(true)
+    else setError(WIRE_MESSAGES[result.reason])
+  }
+
+  if (wired) {
+    return (
+      <section>
+        <h1>HEx is connected to Authentik</h1>
+        <p>Setup is wired and HEx is now using its own scoped credentials. Sign in to continue.</p>
+        <a href="/auth/login">Sign in</a>
+      </section>
+    )
+  }
+
+  return (
+    <section>
+      <h1>Connect HEx to Authentik</h1>
+      <p>
+        HEx will finish configuring its Authentik integration and switch from the bootstrap token to
+        its own least-privilege credentials.
+      </p>
+      <button type="button" onClick={onWire} disabled={busy}>
+        {busy ? 'Connecting…' : 'Connect Authentik'}
+      </button>
+      {error && <p role="alert">{error}</p>}
+    </section>
+  )
 }
 
 export function BootstrapGate({ phase, onAdvance }: Props) {
@@ -21,14 +68,9 @@ export function BootstrapGate({ phase, onAdvance }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  // Past first run the token is spent; owner setup (Authentik wiring) lands here in Slice 3.
+  // Past first run the token is spent; the wiring step takes over.
   if (phase !== 'first_run') {
-    return (
-      <section>
-        <h1>Setup unlocked</h1>
-        <p>HEx is in bootstrap mode. Owner setup continues here.</p>
-      </section>
-    )
+    return <WireStep />
   }
 
   async function onSubmit(event: FormEvent) {

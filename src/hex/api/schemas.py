@@ -25,6 +25,14 @@ class SetupUnlockRequest(BaseModel):
     token: str = Field(min_length=1, max_length=512)
 
 
+class WireResponse(BaseModel):
+    """Outcome of ``POST /setup/wire``. Reports the public client_id only — never a secret."""
+
+    ok: bool
+    client_id: str
+    provider_pk: int
+
+
 class UserResponse(BaseModel):
     """Current-user payload for ``GET /auth/me``. No tokens, no Authentik internals."""
 

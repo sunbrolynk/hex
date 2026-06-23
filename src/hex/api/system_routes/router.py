@@ -9,8 +9,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hex.__version__ import __version__
-from hex.api.schemas import HealthResponse, SetupStatusResponse, SetupUnlockRequest
+from hex.api.guards import require_bootstrap_phase
+from hex.api.schemas import HealthResponse, SetupStatusResponse, SetupUnlockRequest, WireResponse
 from hex.audit import AuditSigner
+from hex.authentik import AuthentikError, AuthentikUnreachable, wire_authentik
 from hex.database import AuditLogManager, SetupStateManager, get_session
 from hex.database.models import AuditAction, AuditResult, AuditSeverity, SetupPhase
 from hex.setup import AttemptLimiter, LockoutCounter
@@ -98,6 +100,65 @@ async def setup_unlock(
         await _audit_failure(session, audit, AuditAction.SETUP_UNLOCK_FAILED, actor)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid setup token")
     return SetupStatusResponse(phase=phase, setup_required=phase != SetupPhase.COMPLETE)
+
+
+@router.post("/setup/wire")
+async def setup_wire(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _: Annotated[None, Depends(require_bootstrap_phase)],
+) -> WireResponse:
+    """Drive first-run Authentik wiring: verify, read back the secret, rotate to a scoped token.
+
+    BOOTSTRAP-only (the guard). The bootstrap token and read-back secrets stay server-side; the
+    response carries only the public client_id. Fail-secure: any wiring failure is audited and
+    surfaced (502/503) with nothing persisted, leaving the install in BOOTSTRAP to retry.
+    """
+    state = request.app.state
+    try:
+        result = await wire_authentik(
+            settings=state.settings,
+            http=state.http,
+            broker=state.secrets,
+            session=session,
+            audit_signer=state.audit_signer,
+        )
+    except AuthentikUnreachable as exc:
+        await _audit_wiring_failure(session, state.audit_signer, type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentik is not reachable yet; try again.",
+        ) from exc
+    except AuthentikError as exc:
+        await _audit_wiring_failure(session, state.audit_signer, type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Authentik wiring failed."
+        ) from exc
+    except Exception as exc:
+        # Persist/encrypt/commit failures are none of the above; #7 still requires they be
+        # audited — never let a privileged action fail as an unaudited 500.
+        await _audit_wiring_failure(session, state.audit_signer, type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentik wiring failed."
+        ) from exc
+    return WireResponse(ok=True, client_id=result.client_id, provider_pk=result.provider_pk)
+
+
+async def _audit_wiring_failure(session: AsyncSession, signer: AuditSigner, error: str) -> None:
+    """Record a wiring failure (best-effort, no-leak); a partial txn is rolled back first."""
+    try:
+        await session.rollback()
+        await AuditLogManager(session, signer).append(
+            action=AuditAction.AUTHENTIK_WIRING_FAILED,
+            severity=AuditSeverity.HIGH,
+            result=AuditResult.FAILURE,
+            actor="system",
+            meta={"error": error},
+        )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        log.error("audit write failed for authentik.wiring.failed", exc_info=True)
 
 
 async def _audit_failure(

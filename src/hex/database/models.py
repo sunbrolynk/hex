@@ -66,6 +66,9 @@ class AuditAction(StrEnum):
     OIDC_LOGIN_FAILED = "oidc.login.failed"
     OIDC_LOGOUT = "oidc.logout"
     AUDIT_CHAIN_VERIFICATION_FAILED = "audit.chain.verification_failed"
+    AUTHENTIK_WIRING_SUCCEEDED = "authentik.wiring.succeeded"
+    AUTHENTIK_WIRING_FAILED = "authentik.wiring.failed"
+    BOOTSTRAP_TOKEN_ROTATED = "bootstrap.token.rotated"  # noqa: S105 — action name, not a credential
 
 
 class AuditSeverity(StrEnum):

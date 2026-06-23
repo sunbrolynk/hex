@@ -29,3 +29,20 @@ export async function unlockSetup(token: string): Promise<UnlockResult> {
   if (res.status === 423) return { ok: false, reason: 'locked' }
   return { ok: false, reason: 'error' }
 }
+
+export type WireResult =
+  | { ok: true; clientId: string }
+  | { ok: false; reason: 'unavailable' | 'failed' | 'error' }
+
+// Trigger first-run Authentik wiring. The server holds all secrets; only the public client_id
+// comes back. 503 = Authentik not ready yet (retry); 502 = wiring failed.
+export async function wireAuthentik(): Promise<WireResult> {
+  const res = await fetch('/setup/wire', { method: 'POST' })
+  if (res.ok) {
+    const body = (await res.json()) as { client_id: string }
+    return { ok: true, clientId: body.client_id }
+  }
+  if (res.status === 503) return { ok: false, reason: 'unavailable' }
+  if (res.status === 502) return { ok: false, reason: 'failed' }
+  return { ok: false, reason: 'error' }
+}

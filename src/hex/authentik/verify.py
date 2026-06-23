@@ -14,12 +14,8 @@ import httpx
 
 from hex.authentik.admin_client import AuthentikAdminClient
 from hex.authentik.errors import AuthentikError
+from hex.authentik.names import GROUP_NAME, PROVIDER_NAME, SA_USERNAME
 from hex.config import get_settings
-
-# Canonical names of the objects deploy/authentik/blueprints/hex.yaml creates.
-_PROVIDER_NAME = "HEx web BFF"
-_SA_USERNAME = "hex-provisioner"
-_GROUP_NAME = "HEx Provisioners"
 
 
 async def _run(base_url: str) -> int:
@@ -33,9 +29,9 @@ async def _run(base_url: str) -> int:
         try:
             report = await client.verify(
                 app_slug=settings.authentik_oidc_app_slug,
-                provider_name=_PROVIDER_NAME,
-                sa_username=_SA_USERNAME,
-                group_name=_GROUP_NAME,
+                provider_name=PROVIDER_NAME,
+                sa_username=SA_USERNAME,
+                group_name=GROUP_NAME,
             )
         except AuthentikError as exc:
             print(f"FAIL: {type(exc).__name__}: {exc}", file=sys.stderr)
