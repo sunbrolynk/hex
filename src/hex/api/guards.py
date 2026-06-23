@@ -23,3 +23,14 @@ async def forbid_until_setup_complete(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="HEx is in first-run setup; this endpoint is unavailable until setup completes.",
         )
+
+
+async def require_bootstrap_phase(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> None:
+    """Allow only in BOOTSTRAP (after the token unlock, before setup completes). Fail closed."""
+    if await SetupStateManager(session).current_phase() is not SetupPhase.BOOTSTRAP:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Authentik wiring is only available during bootstrap.",
+        )

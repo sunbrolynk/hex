@@ -1,6 +1,8 @@
 """System route tests."""
 
+import httpx
 import pytest
+import respx
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -14,9 +16,54 @@ from sqlalchemy.pool import StaticPool
 
 from hex.__version__ import __version__
 from hex.api.main import create_app
-from hex.database import AuditLogManager, SetupStateManager, build_sessionmaker
+from hex.authentik.names import SA_TOKEN_IDENTIFIER
+from hex.database import (
+    AuditLogManager,
+    AuthentikIntegrationManager,
+    SetupStateManager,
+    build_sessionmaker,
+)
 from hex.database.models import AuditLogEntry, SetupPhase, SetupState
 from tests.conftest import make_settings
+
+_AK = "http://ak.test"
+_AK_API = f"{_AK}/api/v3"
+
+
+def _mock_authentik_happy() -> None:
+    """Mock the full Authentik surface a successful wire touches. Call inside respx.mock."""
+    respx.get(f"{_AK}/-/health/ready/").mock(return_value=httpx.Response(204))
+    respx.get(f"{_AK_API}/core/applications/").mock(
+        return_value=httpx.Response(200, json={"results": [{"slug": "hex", "name": "HEx"}]})
+    )
+    respx.get(f"{_AK_API}/providers/oauth2/").mock(
+        return_value=httpx.Response(
+            200, json={"results": [{"pk": 7, "name": "HEx web BFF", "client_id": "cid"}]}
+        )
+    )
+    respx.get(f"{_AK_API}/core/groups/").mock(
+        return_value=httpx.Response(200, json={"results": [{"pk": 3, "name": "HEx Provisioners"}]})
+    )
+    respx.get(f"{_AK_API}/core/users/").mock(
+        return_value=httpx.Response(
+            200,
+            json={"results": [{"pk": 11, "username": "hex-provisioner", "is_superuser": False}]},
+        )
+    )
+    respx.get(f"{_AK_API}/providers/oauth2/7/").mock(
+        return_value=httpx.Response(200, json={"client_secret": "prov-secret"})
+    )
+    respx.post(f"{_AK_API}/core/tokens/").mock(return_value=httpx.Response(201, json={}))
+    respx.get(f"{_AK_API}/core/tokens/{SA_TOKEN_IDENTIFIER}/view_key/").mock(
+        return_value=httpx.Response(200, json={"key": "sa-key"})
+    )
+
+
+async def _set_phase(sessionmaker: async_sessionmaker[AsyncSession], phase: SetupPhase) -> None:
+    async with sessionmaker() as session:
+        state = await SetupStateManager(session).get_or_create()
+        state.phase = phase
+        await session.commit()
 
 
 async def _audit_actions(sessionmaker: async_sessionmaker[AsyncSession]) -> list[str]:
@@ -277,6 +324,122 @@ async def test_setup_unlock_best_effort_audit_never_becomes_500(
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post("/setup/unlock", json={"token": "x"})
     assert resp.status_code == 401
+
+
+async def _wire_app(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession], phase: SetupPhase
+) -> AsyncClient:
+    app = create_app(make_settings(authentik_base_url=_AK, authentik_bootstrap_token="boot-tok"))
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    await _set_phase(sessionmaker, phase)
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
+
+async def test_wire_succeeds_in_bootstrap_persists_and_audits(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    client = await _wire_app(engine, sessionmaker, SetupPhase.BOOTSTRAP)
+    with respx.mock:
+        _mock_authentik_happy()
+        async with client:
+            resp = await client.post("/setup/wire")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"ok": True, "client_id": "cid", "provider_pk": 7}
+
+    async with sessionmaker() as session:
+        row = await AuthentikIntegrationManager(session).get()
+        assert row is not None and row.client_id == "cid" and row.wired_at is not None
+        rows = (await session.execute(select(AuditLogEntry))).scalars().all()
+        audit_blob = " ".join(f"{r.action.value} {r.target} {r.meta}" for r in rows)
+    actions = await _audit_actions(sessionmaker)
+    assert "authentik.wiring.succeeded" in actions
+    assert "bootstrap.token.rotated" in actions
+    # No secret — the bootstrap token, read-back client secret, or SA key — leaks into the
+    # response body or any audit row (non-negotiables #4/#9).
+    for secret in ("boot-tok", "prov-secret", "sa-key"):
+        assert secret not in resp.text
+        assert secret not in audit_blob
+
+
+async def test_wire_is_forbidden_before_bootstrap(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    client = await _wire_app(engine, sessionmaker, SetupPhase.FIRST_RUN)
+    async with client:
+        resp = await client.post("/setup/wire")
+    assert resp.status_code == 409
+    # Nothing was wired or audited from a wrong-phase call.
+    async with sessionmaker() as session:
+        assert await AuthentikIntegrationManager(session).get() is None
+    assert await _audit_actions(sessionmaker) == []
+
+
+async def test_wire_is_forbidden_after_complete(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    client = await _wire_app(engine, sessionmaker, SetupPhase.COMPLETE)
+    async with client:
+        resp = await client.post("/setup/wire")
+    assert resp.status_code == 409
+
+
+async def test_wire_unreachable_authentik_is_503_and_audits_failure(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    client = await _wire_app(engine, sessionmaker, SetupPhase.BOOTSTRAP)
+    with respx.mock:
+        respx.get(f"{_AK}/-/health/ready/").mock(return_value=httpx.Response(204))
+        respx.get(f"{_AK_API}/core/applications/").mock(return_value=httpx.Response(503))
+        async with client:
+            resp = await client.post("/setup/wire")
+    assert resp.status_code == 503
+    # Fail-secure: nothing persisted, and the failure is a HIGH audit event.
+    async with sessionmaker() as session:
+        assert await AuthentikIntegrationManager(session).get() is None
+    assert await _audit_actions(sessionmaker) == ["authentik.wiring.failed"]
+
+
+async def test_wire_without_bootstrap_token_is_502_and_audits_failure(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    # In BOOTSTRAP but misconfigured (no bootstrap token): a clean 502 + audited failure, not a 500.
+    app = create_app(make_settings(authentik_base_url=_AK))  # no bootstrap token
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    await _set_phase(sessionmaker, SetupPhase.BOOTSTRAP)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/setup/wire")
+    assert resp.status_code == 502
+    async with sessionmaker() as session:
+        assert await AuthentikIntegrationManager(session).get() is None
+    assert await _audit_actions(sessionmaker) == ["authentik.wiring.failed"]
+
+
+async def test_wire_persistence_failure_is_audited_and_persists_nothing(
+    engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-Authentik failure in the persist tail is still audited (never an unaudited 500)."""
+
+    async def boom_set_oidc(self: AuthentikIntegrationManager, **kwargs: object) -> None:
+        # Flush a row first, THEN fail — so the test proves the failure handler's rollback
+        # discards an already-flushed partial write, not just a pre-flush abort.
+        await self.get_or_create()
+        raise RuntimeError("db write failed")
+
+    monkeypatch.setattr(AuthentikIntegrationManager, "set_oidc", boom_set_oidc)
+    client = await _wire_app(engine, sessionmaker, SetupPhase.BOOTSTRAP)
+    with respx.mock:
+        _mock_authentik_happy()
+        async with client:
+            resp = await client.post("/setup/wire")
+    assert resp.status_code == 500
+    async with sessionmaker() as session:
+        assert await AuthentikIntegrationManager(session).get() is None
+    assert await _audit_actions(sessionmaker) == ["authentik.wiring.failed"]
 
 
 async def test_setup_unlock_burn_db_error_is_503(

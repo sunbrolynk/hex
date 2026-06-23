@@ -15,3 +15,7 @@ class BlueprintObjectMissing(AuthentikError):
 
 class OverprivilegedServiceAccount(AuthentikError):
     """The provisioning service account is a superuser — refused (non-negotiable #3)."""
+
+
+class WiringFailed(AuthentikError):
+    """Authentik responded but the wiring step could not complete (missing secret/token/field)."""

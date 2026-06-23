@@ -128,6 +128,9 @@ async def _assert_audit_log_is_immutable(url: str) -> None:
             ).scalar_one()
         assert "oidc.login.succeeded" in defn
         assert "audit.chain.verification_failed" in defn
+        # 0006 widened the CHECK for the wiring + rotation events.
+        assert "authentik.wiring.succeeded" in defn
+        assert "bootstrap.token.rotated" in defn
     finally:
         await engine.dispose()
 

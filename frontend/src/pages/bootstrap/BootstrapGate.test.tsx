@@ -94,8 +94,56 @@ describe('BootstrapGate', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/something went wrong/i)
   })
 
-  it('shows the post-unlock stub once past first run', () => {
+  it('shows the connect-Authentik step once past first run', () => {
     render(<BootstrapGate phase="bootstrap" onAdvance={vi.fn()} />)
-    expect(screen.getByRole('heading', { name: 'Setup unlocked' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Connect HEx to Authentik' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Connect Authentik' })).toBeEnabled()
+  })
+
+  it('wires Authentik and offers sign-in on success', async () => {
+    const fetchMock = mockUnlock({
+      ok: true,
+      status: 200,
+      body: { ok: true, client_id: 'cid', provider_pk: 7 },
+    })
+    render(<BootstrapGate phase="bootstrap" onAdvance={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Authentik' }))
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/setup/wire',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(
+      await screen.findByRole('heading', { name: 'HEx is connected to Authentik' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/auth/login')
+  })
+
+  it('shows a retryable message when Authentik is not ready yet (503)', async () => {
+    mockUnlock({ ok: false, status: 503 })
+    render(<BootstrapGate phase="bootstrap" onAdvance={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Authentik' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/isn.t reachable yet/i)
+  })
+
+  it('shows a failure message when wiring fails (502)', async () => {
+    mockUnlock({ ok: false, status: 502 })
+    render(<BootstrapGate phase="bootstrap" onAdvance={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Authentik' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn.t finish configuring/i)
+  })
+
+  it('shows a generic message on an unexpected wiring error', async () => {
+    mockUnlock({ ok: false, status: 500 })
+    render(<BootstrapGate phase="bootstrap" onAdvance={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Authentik' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/something went wrong/i)
   })
 })
