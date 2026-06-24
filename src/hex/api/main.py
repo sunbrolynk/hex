@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from hex.__version__ import __version__
 from hex.api.auth_routes import router as auth_router
+from hex.api.breakglass_routes import router as breakglass_router
 from hex.api.system_routes import router as system_router
 from hex.audit import AuditSigner
 from hex.breakglass import BreakGlassConfig
@@ -61,6 +62,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.discovery_cache = DiscoveryCache(app.state.http)
     app.include_router(system_router)
     app.include_router(auth_router)
+    app.include_router(breakglass_router)
     _mount_spa(app, settings)
     return app
 

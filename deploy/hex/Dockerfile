@@ -37,4 +37,6 @@ RUN useradd --system --uid 10001 --no-create-home hex \
 USER hex
 
 EXPOSE 8000
-CMD ["uvicorn", "hex.api.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+# hex.serve opens the proxy-facing socket plus (when break-glass is enabled) a separate
+# LAN-bound socket; a single uvicorn process serves both (ADR 0008).
+CMD ["python", "-m", "hex.serve"]

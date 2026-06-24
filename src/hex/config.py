@@ -86,6 +86,14 @@ class Settings(BaseSettings):
     breakglass_password_hash: SecretStr = SecretStr("")  # Argon2id PHC string, never plaintext
     breakglass_totp_secret: SecretStr = SecretStr("")  # base32; offline second factor
 
+    # Listeners (read by hex.serve). The main socket faces the reverse proxy; the break-glass
+    # socket is opened only when break-glass is enabled and binds to a LAN/loopback address so the
+    # emergency path is unreachable through the proxy (ADR 0008, breakglass-local-only-enforcement).
+    serve_host: str = "0.0.0.0"  # noqa: S104 — container-internal; the proxy fronts it
+    serve_port: int = 8000
+    breakglass_listen_host: str = "127.0.0.1"  # operator sets their LAN IP to reach it off-box
+    breakglass_listen_port: int = 8001
+
     @property
     def database_url(self) -> str:
         """Async SQLAlchemy DSN. Credentials are percent-encoded; never log this."""

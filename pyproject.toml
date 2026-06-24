@@ -51,8 +51,8 @@ target-version = "py312"
 select = ["E", "W", "F", "I", "B", "UP", "ASYNC", "S"]
 
 [tool.ruff.lint.per-file-ignores]
-# asserts + hardcoded placeholder/secret literals are expected in tests
-"tests/**" = ["S101", "S105", "S106", "S107"]
+# asserts + hardcoded placeholder/secret literals + bind-address data are expected in tests
+"tests/**" = ["S101", "S104", "S105", "S106", "S107"]
 # _RULES carries long, unsplittable secret-generation command literals
 "src/hex/secrets/validation.py" = ["E501"]
 
