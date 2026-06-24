@@ -49,13 +49,13 @@ jobs:
         run: uv run pyright
       - name: Tests + coverage gate
         run: uv run pytest --cov-report=xml   # --cov/--cov-fail-under come from pyproject addopts
-      - name: Security-critical coverage gate (secrets + setup + audit + oidc/auth + authentik >= 95%)
+      - name: Security-critical coverage gate (secrets + setup + audit + oidc/auth + authentik + break-glass >= 95%)
         # grep guards against a silent no-op if the include glob ever matches zero files.
         run: |
           set -o pipefail
           uv run coverage report \
-            --include='*/hex/secrets/*,*/hex/setup/*,*/hex/audit/*,*/hex/oidc/*,*/hex/authentik/admin_client.py,*/hex/authentik/errors.py,*/hex/authentik/runtime_config.py,*/hex/authentik/wiring_client.py,*/hex/authentik/orchestrator.py,*/hex/database/setup_manager.py,*/hex/database/audit_manager.py,*/hex/database/authentik_integration_manager.py,*/hex/database/user_manager.py,*/hex/database/session_manager.py,*/hex/database/login_state_manager.py,*/hex/api/auth_routes/*,*/hex/api/guards.py' \
-            --fail-under=95 | grep -E 'hex/secrets|hex/setup|hex/audit|hex/oidc|hex/authentik|setup_manager|audit_manager|authentik_integration_manager|user_manager|session_manager|login_state_manager|auth_routes|guards'
+            --include='*/hex/secrets/*,*/hex/setup/*,*/hex/audit/*,*/hex/oidc/*,*/hex/breakglass/*,*/hex/authentik/admin_client.py,*/hex/authentik/errors.py,*/hex/authentik/runtime_config.py,*/hex/authentik/wiring_client.py,*/hex/authentik/orchestrator.py,*/hex/database/setup_manager.py,*/hex/database/audit_manager.py,*/hex/database/authentik_integration_manager.py,*/hex/database/user_manager.py,*/hex/database/session_manager.py,*/hex/database/login_state_manager.py,*/hex/api/auth_routes/*,*/hex/api/guards.py' \
+            --fail-under=95 | grep -E 'hex/secrets|hex/setup|hex/audit|hex/oidc|hex/breakglass|hex/authentik|setup_manager|audit_manager|authentik_integration_manager|user_manager|session_manager|login_state_manager|auth_routes|guards'
       - name: Migration round-trip (Postgres)
         # Scoped env (not job-level) so the weak DB password never reaches the rest of the
         # suite's secret validation. --no-cov keeps the coverage report above intact.

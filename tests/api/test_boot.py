@@ -3,10 +3,13 @@
 import base64
 import secrets
 
+import pyotp
 import pytest
+from argon2 import PasswordHasher
 from pydantic import SecretStr
 
 from hex.api.main import create_app
+from hex.breakglass import BreakGlassConfigError
 from hex.config import Settings
 from hex.secrets.errors import InsecureConfigError
 
@@ -35,3 +38,26 @@ def test_create_app_refuses_missing_audit_key() -> None:
 def test_create_app_boots_with_valid_secrets() -> None:
     app = create_app(_valid_settings())
     assert app.title == "HEx"
+
+
+def test_create_app_refuses_enabled_breakglass_without_credential() -> None:
+    # Break-glass enabled but the passphrase hash is missing → refuse to boot (ADR 0008).
+    broken = _valid_settings().model_copy(
+        update={"breakglass_enabled": True, "breakglass_username": "owner-recovery-7x"}
+    )
+    with pytest.raises(BreakGlassConfigError):
+        create_app(broken)
+
+
+def test_create_app_boots_with_valid_breakglass() -> None:
+    hasher = PasswordHasher(memory_cost=65536, time_cost=3, parallelism=1)
+    configured = _valid_settings().model_copy(
+        update={
+            "breakglass_enabled": True,
+            "breakglass_username": "owner-recovery-7x",
+            "breakglass_password_hash": SecretStr(hasher.hash("recovery-passphrase")),
+            "breakglass_totp_secret": SecretStr(pyotp.random_base32()),
+        }
+    )
+    app = create_app(configured)
+    assert app.state.breakglass.enabled is True
