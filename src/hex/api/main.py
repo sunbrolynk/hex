@@ -14,6 +14,7 @@ from hex.__version__ import __version__
 from hex.api.auth_routes import router as auth_router
 from hex.api.system_routes import router as system_router
 from hex.audit import AuditSigner
+from hex.breakglass import BreakGlassConfig
 from hex.config import Settings, get_settings
 from hex.database import AuditLogManager, SetupStateManager, build_engine, build_sessionmaker
 from hex.database.migrate import assert_at_head, upgrade_to_head
@@ -34,6 +35,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """
     settings = settings or get_settings()
     validate_secrets(settings)
+    # Refuse to boot on an enabled-but-broken break-glass config (ADR 0008); resolved once here.
+    breakglass = BreakGlassConfig.from_settings(settings)
     broker = broker_from_settings(settings)
 
     # Docs live at /api-docs (tucked away), not FastAPI's default /docs; ReDoc off.
@@ -47,6 +50,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.secrets = broker
+    app.state.breakglass = breakglass
     app.state.audit_signer = AuditSigner.from_settings(settings)
     app.state.setup_limiter = AttemptLimiter(
         settings.setup_unlock_max_attempts, settings.setup_unlock_window_seconds

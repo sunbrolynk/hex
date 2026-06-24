@@ -16,6 +16,11 @@ dependencies = [
     # pyjwt[crypto] validates ID tokens (RS256 + JWKS via PyJWKClient). cryptography backs both.
     "httpx>=0.27",
     "pyjwt[crypto]>=2.10",
+    # Break-glass owner credential (Slice 4): argon2-cffi hashes the low-entropy passphrase
+    # (Argon2id, above OWASP floor); pyotp validates the offline TOTP second factor. Both are
+    # security-critical, so they are exact-pinned like cryptography. pyotp is pure-Python.
+    "argon2-cffi==25.1.0",
+    "pyotp==2.10.0",
 ]
 
 [dependency-groups]

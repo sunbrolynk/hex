@@ -76,6 +76,16 @@ class Settings(BaseSettings):
     session_lifetime_seconds: int = 60 * 60 * 8
     oidc_login_state_ttl_seconds: int = 600
 
+    # Break-glass owner access (ADR 0008, SECURITY_MODEL §13) — the one local credential, for when
+    # Authentik/OIDC is unreachable. DISABLED by default; enabling is validated at boot
+    # (hex.breakglass.config) and refuses to boot if incompletely/insecurely configured.
+    breakglass_enabled: bool = False
+    breakglass_require_idp_down: bool = True  # accept only while the IdP fails its health check
+    breakglass_local_only: bool = True  # LAN-only; enforced by the route's listener (Slice 4-2)
+    breakglass_username: str = ""
+    breakglass_password_hash: SecretStr = SecretStr("")  # Argon2id PHC string, never plaintext
+    breakglass_totp_secret: SecretStr = SecretStr("")  # base32; offline second factor
+
     @property
     def database_url(self) -> str:
         """Async SQLAlchemy DSN. Credentials are percent-encoded; never log this."""
