@@ -1,5 +1,6 @@
-import { type FormEvent, useState } from 'react'
-import { unlockSetup, wireAuthentik } from '../../api/setup'
+import { type FormEvent, useEffect, useState } from 'react'
+import { type CurrentUser, getCurrentUser } from '../../api/auth'
+import { completeSetup, unlockSetup, wireAuthentik } from '../../api/setup'
 
 // The seed of the owner-setup wizard (owner-setup-wizard-vision): the token gate, then the
 // Authentik wiring step. Wrong/throttled/error all surface a generic, non-leaky line.
@@ -63,14 +64,67 @@ function WireStep() {
   )
 }
 
+// The final bootstrap step: the signed-in user claims ownership, which advances setup to COMPLETE.
+// onComplete refreshes the gate, dropping the now-owner into the app.
+function OwnerClaimStep({ user, onComplete }: { user: CurrentUser; onComplete: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function onClaim() {
+    setBusy(true)
+    setError(null)
+    const ok = await completeSetup()
+    setBusy(false)
+    if (ok) onComplete()
+    else setError('Couldn’t finish setup. Reload HEx and try again.')
+  }
+
+  return (
+    <section>
+      <h1>Claim ownership of HEx</h1>
+      <p>
+        You’re signed in as <strong>{user.username ?? user.email ?? 'your account'}</strong>. Claim
+        ownership to finish setup and open HEx.
+      </p>
+      <button type="button" onClick={onClaim} disabled={busy}>
+        {busy ? 'Finishing…' : 'Claim ownership & finish'}
+      </button>
+      {error && <p role="alert">{error}</p>}
+    </section>
+  )
+}
+
+// In bootstrap mode, branch on whether the owner has signed in yet: anonymous → wire + sign in;
+// signed in → claim ownership. The OIDC round-trip lands back here authenticated.
+function BootstrapFlow({ onAdvance }: { onAdvance: () => void }) {
+  const [user, setUser] = useState<CurrentUser | null | 'loading' | 'error'>('loading')
+
+  useEffect(() => {
+    // getCurrentUser returns null only on a clean 401 (anonymous → wire step). Any other failure
+    // (5xx, network) must surface as an error, not masquerade as "signed out" and bounce an
+    // already-authenticated owner back to the wiring step.
+    getCurrentUser().then(
+      (u) => setUser(u),
+      () => setUser('error'),
+    )
+  }, [])
+
+  if (user === 'loading') return <p>Loading HEx…</p>
+  if (user === 'error') {
+    return <p role="alert">Couldn’t reach HEx. Check the server is running and reload.</p>
+  }
+  if (user === null) return <WireStep />
+  return <OwnerClaimStep user={user} onComplete={onAdvance} />
+}
+
 export function BootstrapGate({ phase, onAdvance }: Props) {
   const [token, setToken] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  // Past first run the token is spent; the wiring step takes over.
+  // Past first run the token is spent; wiring + owner claim take over.
   if (phase !== 'first_run') {
-    return <WireStep />
+    return <BootstrapFlow onAdvance={onAdvance} />
   }
 
   async function onSubmit(event: FormEvent) {

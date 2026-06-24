@@ -46,3 +46,10 @@ export async function wireAuthentik(): Promise<WireResult> {
   if (res.status === 502) return { ok: false, reason: 'failed' }
   return { ok: false, reason: 'error' }
 }
+
+// Claim ownership and finish setup. Requires the bootstrap cookie + an authenticated session
+// (both same-origin cookies the browser already holds). Returns true once setup is COMPLETE.
+export async function completeSetup(): Promise<boolean> {
+  const res = await fetch('/setup/complete', { method: 'POST' })
+  return res.ok
+}
