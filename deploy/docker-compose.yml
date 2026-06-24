@@ -26,9 +26,18 @@ services:
       HEX_STATIC_DIR: /app/frontend
       # Reach the bundled DB by its compose service name (overrides .env's localhost default).
       HEX_DB_HOST: hex-db
+      # Break-glass listens on all CONTAINER interfaces so the published port can reach it; the
+      # real LAN/loopback restriction is the host-side publish bind below (HEX_BREAKGLASS_HOST_BIND),
+      # backed by the in-app local-only re-check. The reverse proxy must front ONLY port 8000.
+      HEX_BREAKGLASS_LISTEN_HOST: 0.0.0.0
     ports:
       # Host port is randomized off common ports (8000 was taken); override via HEX_HOST_PORT.
       - "${HEX_HOST_PORT:-52000}:8000"
+      # Break-glass listener (ADR 0008): published to the LAN/loopback interface ONLY, never to the
+      # reverse proxy. The container opens this socket only when HEX_BREAKGLASS_ENABLED=true; until
+      # then the published port simply refuses. Set HEX_BREAKGLASS_HOST_BIND to your LAN IP to reach
+      # it off-box (default loopback = same-host only). See breakglass-local-only-enforcement.
+      - "${HEX_BREAKGLASS_HOST_BIND:-127.0.0.1}:${HEX_BREAKGLASS_HOST_PORT:-52001}:8001"
     depends_on:
       hex-db:
         condition: service_healthy
