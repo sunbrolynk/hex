@@ -4,11 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from starlette.requests import Request
 
 from hex.api.guards import _is_local_client, require_breakglass_listener
-from hex.api.main import create_app
 from hex.config import Settings
 
 _BG_PORT = 8001
@@ -87,19 +86,11 @@ async def test_404s_when_breakglass_disabled_even_on_listener() -> None:
 
 async def test_route_is_mounted_and_guarded_404s_by_default(client: AsyncClient) -> None:
     # End-to-end: the route exists but the guard closes it on the default (proxy) transport.
-    resp = await client.get("/auth/breakglass")
+    # (The guard-satisfied path is covered in tests/api/test_breakglass_login.py.)
+    resp = await client.post(
+        "/auth/breakglass", json={"username": "x", "password": "y", "totp": "123456"}
+    )
     assert resp.status_code == 404
-
-
-async def test_probe_returns_ready_when_guard_passes() -> None:
-    # With the listener guard satisfied, the placeholder probe answers (proves it's wired in).
-    app = create_app(Settings(db_auto_migrate=False))
-    app.dependency_overrides[require_breakglass_listener] = lambda: None
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        resp = await ac.get("/auth/breakglass")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "ready"}
 
 
 @pytest.mark.parametrize(

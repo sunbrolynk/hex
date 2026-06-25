@@ -73,8 +73,8 @@ async def _assert_auth_schema(url: str) -> None:
         async with engine.connect() as conn:
             await conn.execute(
                 text(
-                    "SELECT id, authentik_sub, username, email, is_owner, created_at, updated_at "
-                    "FROM users"
+                    "SELECT id, authentik_sub, username, email, is_owner, is_break_glass, "
+                    "created_at, updated_at FROM users"  # is_break_glass added in 0008
                 )
             )
             await conn.execute(
@@ -135,6 +135,8 @@ async def _assert_audit_log_is_immutable(url: str) -> None:
         assert "authentik.wiring.succeeded" in defn
         assert "bootstrap.token.rotated" in defn
         assert "owner.claimed" in defn  # 0007
+        assert "breakglass.login.succeeded" in defn  # 0008
+        assert "breakglass.login.locked_out" in defn
     finally:
         await engine.dispose()
 
