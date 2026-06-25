@@ -73,6 +73,9 @@ class AuditAction(StrEnum):
     AUTHENTIK_WIRING_FAILED = "authentik.wiring.failed"
     BOOTSTRAP_TOKEN_ROTATED = "bootstrap.token.rotated"  # noqa: S105 — action name, not a credential
     OWNER_CLAIMED = "owner.claimed"
+    BREAKGLASS_SUCCEEDED = "breakglass.login.succeeded"
+    BREAKGLASS_FAILED = "breakglass.login.failed"
+    BREAKGLASS_LOCKED_OUT = "breakglass.login.locked_out"
 
 
 class AuditSeverity(StrEnum):
@@ -145,6 +148,9 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(String(320), default=None)
     # Owner-vs-user determination + enforcement lands in Slice 3 (owner setup); default false.
     is_owner: Mapped[bool] = mapped_column(default=False)
+    # True for the local break-glass owner identity (ADR 0008) — not an Authentik user. Marks the
+    # account for audit/UI and to exempt it from any future inactive-user cleanup.
+    is_break_glass: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

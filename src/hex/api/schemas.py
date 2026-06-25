@@ -1,6 +1,6 @@
 """Central API schemas."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from hex.database.models import SetupPhase
 
@@ -40,3 +40,13 @@ class UserResponse(BaseModel):
     username: str | None
     email: str | None
     is_owner: bool
+
+
+class BreakGlassLoginRequest(BaseModel):
+    """Body for ``POST /auth/breakglass``: local owner credential + offline TOTP."""
+
+    model_config = ConfigDict(extra="forbid")  # reject unknown fields (SECURITY_MODEL §10)
+
+    username: str = Field(min_length=1, max_length=255)
+    password: str = Field(min_length=1, max_length=1024)
+    totp: str = Field(min_length=1, max_length=16)

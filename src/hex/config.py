@@ -93,6 +93,14 @@ class Settings(BaseSettings):
     serve_port: int = 8000
     breakglass_listen_host: str = "127.0.0.1"  # operator sets their LAN IP to reach it off-box
     breakglass_listen_port: int = 8001
+    # Cooldown lockout for the break-glass login: max_attempts failures within window_seconds trip
+    # a lockout that auto-clears after lockout_seconds (stays usable in a real emergency, unlike the
+    # restart-to-recover setup freeze). A short, dedicated session lifetime keeps the emergency
+    # window small.
+    breakglass_max_attempts: int = 5
+    breakglass_window_seconds: float = 300.0
+    breakglass_lockout_seconds: float = 900.0
+    breakglass_session_lifetime_seconds: int = 60 * 60
 
     @property
     def database_url(self) -> str:

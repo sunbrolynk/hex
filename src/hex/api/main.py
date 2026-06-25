@@ -16,6 +16,7 @@ from hex.api.breakglass_routes import router as breakglass_router
 from hex.api.system_routes import router as system_router
 from hex.audit import AuditSigner
 from hex.breakglass import BreakGlassConfig
+from hex.breakglass.lockout import CooldownLimiter
 from hex.config import Settings, get_settings
 from hex.database import AuditLogManager, SetupStateManager, build_engine, build_sessionmaker
 from hex.database.migrate import assert_at_head, upgrade_to_head
@@ -57,6 +58,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.setup_unlock_max_attempts, settings.setup_unlock_window_seconds
     )
     app.state.setup_lockout = LockoutCounter()
+    app.state.breakglass_lockout = CooldownLimiter(
+        settings.breakglass_max_attempts,
+        settings.breakglass_window_seconds,
+        settings.breakglass_lockout_seconds,
+    )
     app.state.http = httpx.AsyncClient(timeout=10.0)
     # Shared discovery/JWKS cache; the OIDC client is built per request from resolved config.
     app.state.discovery_cache = DiscoveryCache(app.state.http)
