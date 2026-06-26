@@ -38,10 +38,11 @@ afterEach(() => {
 })
 
 describe('BreakGlassLogin', () => {
-  it('renders as not-found off the listener (availability 404)', async () => {
+  it('renders a generic 404 off the listener (availability 404)', async () => {
     mockFetch({ available: { ok: false, status: 404 } })
     render(<BreakGlassLogin />)
-    expect(await screen.findByText('Not found.')).toBeInTheDocument()
+    // Indistinguishable from any unknown route — no break-glass-specific tell.
+    expect(await screen.findByRole('heading', { name: '404' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Break-glass sign-in' })).not.toBeInTheDocument()
   })
 

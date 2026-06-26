@@ -5,6 +5,7 @@ import { SetupGate } from './components/setup/SetupGate'
 import { AboutPage } from './pages/about/AboutPage'
 import { BreakGlassLogin } from './pages/breakglass/BreakGlassLogin'
 import { HomePage } from './pages/home/HomePage'
+import { NotFound } from './pages/notfound/NotFound'
 
 // The normal app sits behind setup + auth gates. Break-glass is deliberately outside them: it must
 // render when Authentik (hence the normal login) is down — that's the whole point (ADR 0008).
@@ -29,6 +30,7 @@ export function App() {
             <Route path="about" element={<AboutPage />} />
           </Route>
         </Route>
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
   )

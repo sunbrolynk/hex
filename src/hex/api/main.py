@@ -9,6 +9,9 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response
+from starlette.types import Scope
 
 from hex.__version__ import __version__
 from hex.api.auth_routes import router as auth_router
@@ -126,6 +129,21 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         await owned_engine.dispose()
 
 
+class _SpaStaticFiles(StaticFiles):
+    """StaticFiles with SPA history fallback: an unknown path serves ``index.html`` so client-side
+    routes (``/breakglass``, ``/about``, …) work on a direct load. Real API routes are registered
+    before this mount, so they still win — only genuinely unmatched paths fall back.
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404:
+                return await super().get_response("index.html", scope)
+            raise
+
+
 def _mount_spa(app: FastAPI, settings: Settings) -> None:
     """Serve the built frontend on the same origin, if present.
 
@@ -137,4 +155,4 @@ def _mount_spa(app: FastAPI, settings: Settings) -> None:
     static = Path(settings.static_dir)
     if not static.is_dir():
         return
-    app.mount("/", StaticFiles(directory=static, html=True), name="spa")
+    app.mount("/", _SpaStaticFiles(directory=static, html=True), name="spa")

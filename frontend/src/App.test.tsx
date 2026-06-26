@@ -57,6 +57,13 @@ describe('break-glass route', () => {
     expect(screen.queryByRole('heading', { name: 'Finish setting up HEx' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'About' })).not.toBeInTheDocument()
   })
+
+  it('renders a generic 404 for an unknown route (same as off-listener break-glass)', async () => {
+    mockApi({ setup: { phase: 'complete', setup_required: false }, me: OWNER })
+    window.history.pushState({}, '', '/does-not-exist')
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: '404' })).toBeInTheDocument()
+  })
 })
 
 describe('App gating', () => {

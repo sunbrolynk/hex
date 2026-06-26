@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import { type BreakGlassResult, breakglassAvailable, breakglassLogin } from '../../api/breakglass'
+import { NotFound } from '../notfound/NotFound'
 
 // Emergency owner sign-in, served only on the LAN break-glass listener (ADR 0008). Independent of
 // SetupGate/AuthGate — it must work precisely when Authentik (and so the normal login) is down.
@@ -24,8 +25,9 @@ export function BreakGlassLogin() {
   }, [])
 
   if (available === 'loading') return <p>Loading…</p>
-  // Off the listener the probe 404s; render as if the page doesn't exist (enumeration-resistant).
-  if (available === 'no') return <p>Not found.</p>
+  // Off the listener the probe 404s; render the same generic 404 as any unknown route, so the page
+  // is indistinguishable from one that doesn't exist (the real boundary is the server-side listener).
+  if (available === 'no') return <NotFound />
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()

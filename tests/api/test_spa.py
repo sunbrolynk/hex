@@ -31,6 +31,22 @@ async def test_spa_served_and_api_not_shadowed(tmp_path: Path) -> None:
     assert openapi.status_code == 200
 
 
+async def test_spa_history_fallback_serves_index_for_client_routes(tmp_path: Path) -> None:
+    # A direct load of a client-side route (no matching file/route) must serve index.html so
+    # React Router can render it — break-glass's /breakglass is only ever reached this way.
+    (tmp_path / "index.html").write_text("<!doctype html><title>HEx</title>SPA-OK")
+    app = create_app(Settings(static_dir=str(tmp_path)))
+
+    deep = await _get(app, "/breakglass")
+    assert deep.status_code == 200
+    assert "SPA-OK" in deep.text
+
+    # A real (guarded) API route still wins over the fallback — it 404s as JSON, not index.html.
+    api = await _get(app, "/auth/breakglass")  # break-glass disabled here → guard 404
+    assert api.status_code == 404
+    assert "SPA-OK" not in api.text
+
+
 async def test_no_spa_mount_when_bundle_absent(tmp_path: Path) -> None:
     app = create_app(Settings(static_dir=str(tmp_path / "does-not-exist")))
     root = await _get(app, "/")
