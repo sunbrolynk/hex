@@ -32,6 +32,7 @@ const OWNER: MeBody = { id: 1, username: 'owner', email: 'owner@example.com', is
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  window.history.pushState({}, '', '/') // reset location for the gated-route tests
 })
 
 describe('App shell', () => {
@@ -41,6 +42,20 @@ describe('App shell', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'HEx' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'About' })).toHaveAttribute('href', '/about')
     expect(screen.getByRole('button', { name: 'Log out' })).toBeInTheDocument()
+  })
+})
+
+describe('break-glass route', () => {
+  it('renders break-glass login outside the setup/auth gates', async () => {
+    // Even with first-run setup required and no session, /breakglass must render — it exists for
+    // exactly when Authentik (and the normal login) is down (ADR 0008).
+    mockApi({ setup: { phase: 'first_run', setup_required: true } }) // me → 401
+    window.history.pushState({}, '', '/breakglass')
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Break-glass sign-in' })).toBeInTheDocument()
+    // The gated surfaces are absent — the bypass is scoped to this one route.
+    expect(screen.queryByRole('heading', { name: 'Finish setting up HEx' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'About' })).not.toBeInTheDocument()
   })
 })
 

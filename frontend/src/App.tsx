@@ -1,23 +1,35 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Outlet, Route, Routes } from 'react-router-dom'
 import { AuthGate } from './components/auth/AuthGate'
 import { AppLayout } from './components/layout/AppLayout'
 import { SetupGate } from './components/setup/SetupGate'
 import { AboutPage } from './pages/about/AboutPage'
+import { BreakGlassLogin } from './pages/breakglass/BreakGlassLogin'
 import { HomePage } from './pages/home/HomePage'
 
-export function App() {
+// The normal app sits behind setup + auth gates. Break-glass is deliberately outside them: it must
+// render when Authentik (hence the normal login) is down — that's the whole point (ADR 0008).
+function GatedApp() {
   return (
     <SetupGate>
       <AuthGate>
-        <BrowserRouter>
-          <Routes>
-            <Route element={<AppLayout />}>
-              <Route index element={<HomePage />} />
-              <Route path="about" element={<AboutPage />} />
-            </Route>
-          </Routes>
-        </BrowserRouter>
+        <Outlet />
       </AuthGate>
     </SetupGate>
+  )
+}
+
+export function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/breakglass" element={<BreakGlassLogin />} />
+        <Route element={<GatedApp />}>
+          <Route element={<AppLayout />}>
+            <Route index element={<HomePage />} />
+            <Route path="about" element={<AboutPage />} />
+          </Route>
+        </Route>
+      </Routes>
+    </BrowserRouter>
   )
 }
