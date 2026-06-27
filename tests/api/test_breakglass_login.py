@@ -75,6 +75,16 @@ async def _actions(db_session: AsyncSession) -> list[AuditAction]:
     return list((await db_session.execute(select(AuditLogEntry.action))).scalars().all())
 
 
+async def test_availability_probe_returns_ok_on_listener(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    client = await _make_client(engine, sessionmaker, _settings())
+    async with client:
+        resp = await client.get("/auth/breakglass")
+    assert resp.status_code == 200
+    assert resp.json() == {"available": True}
+
+
 async def test_success_mints_owner_session(
     engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession], db_session: AsyncSession
 ) -> None:
@@ -212,4 +222,10 @@ async def test_audit_write_failure_does_not_500(
 async def test_route_guarded_404_when_breakglass_disabled(client: AsyncClient) -> None:
     # Without the guard override, the default (disabled) app 404s the POST — the boundary holds.
     resp = await client.post("/auth/breakglass", json=_good_body())
+    assert resp.status_code == 404
+
+
+async def test_availability_probe_404_off_listener(client: AsyncClient) -> None:
+    # The GET probe 404s on the proxy origin too, so the UI reads as non-existent off-listener.
+    resp = await client.get("/auth/breakglass")
     assert resp.status_code == 404

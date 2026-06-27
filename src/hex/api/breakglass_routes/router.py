@@ -53,6 +53,12 @@ async def _audit_failure(
         log.error("audit write failed for %s", action, exc_info=True)
 
 
+@router.get("/auth/breakglass", dependencies=[Depends(require_breakglass_listener)])
+async def breakglass_available() -> dict[str, bool]:
+    """Liveness for the emergency-login UI: 200 only on the LAN listener (404 elsewhere)."""
+    return {"available": True}
+
+
 @router.post("/auth/breakglass", dependencies=[Depends(require_breakglass_listener)])
 async def breakglass_login(
     body: BreakGlassLoginRequest,
