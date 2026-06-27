@@ -46,6 +46,11 @@ async def test_spa_history_fallback_serves_index_for_client_routes(tmp_path: Pat
     assert api.status_code == 404
     assert "SPA-OK" not in api.text
 
+    # A missing static asset stays a real 404 — the fallback is for navigation, not assets.
+    asset = await _get(app, "/assets/missing.js")
+    assert asset.status_code == 404
+    assert "SPA-OK" not in asset.text
+
 
 async def test_no_spa_mount_when_bundle_absent(tmp_path: Path) -> None:
     app = create_app(Settings(static_dir=str(tmp_path / "does-not-exist")))

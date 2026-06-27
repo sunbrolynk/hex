@@ -139,7 +139,10 @@ class _SpaStaticFiles(StaticFiles):
         try:
             return await super().get_response(path, scope)
         except StarletteHTTPException as exc:
-            if exc.status_code == 404:
+            # Only navigation requests (no file extension) fall back to index.html. A missing
+            # static asset must stay a real 404 — serving HTML with a 200 for a .js/.css would
+            # break MIME handling and mask broken-deploy/monitoring signals.
+            if exc.status_code == 404 and not Path(path).suffix:
                 return await super().get_response("index.html", scope)
             raise
 
