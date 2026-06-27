@@ -34,6 +34,9 @@ entries:
         - authentik_core.add_user_to_group
         - authentik_core.remove_user_from_group
         - authentik_core.view_group
+        # Mint invitations for the HEx enrollment flow (Slice 6-2; hex-enrollment.yaml).
+        - authentik_stages_invitation.add_invitation
+        - authentik_stages_invitation.view_invitation
 
   # ── Group carrying the role; the SA is a member. is_superuser explicitly false ──
   - model: authentik_core.group
