@@ -33,6 +33,12 @@ So every provider declares **two orthogonal axes**, not one.
 | `external_invite` | Identity lives on an external IdP HEx does not control; access = a share/membership the user claims with their own account. | Send an invite/share via API; user claims it externally. | **Plex** (plex.tv), Discord server invites |
 | `manual` | No API and no SSO. HEx cannot automate it. | Render owner-authored step-by-step instructions in the wizard. | Niche apps, hardware portals, anything without an enrollment API |
 
+The mode also governs **seamless access** — whether clicking a dashboard tile lands the user in the
+service already signed in (no second login). `sso_group` gets this for free via Authentik SSO;
+`api_local` is best-effort (only if the app supports SSO); `external_invite`/`manual` cannot. Always
+achieved *through Authentik*, never by HEx forging/injecting identity (non-negotiable #2). This is a
+further reason to prefer pushing services into `sso_group`. See LIFECYCLE §4 "Seamless access".
+
 ## Axis 2 — `identity_owner`: who owns the user record (governs offboarding)
 
 | Owner | Who holds the identity | Deprovision semantics | Status semantics |
