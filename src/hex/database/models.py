@@ -4,9 +4,11 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Index, String, Text, func
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from hex.providers.types import ProvisionState
 
 
 class Base(DeclarativeBase):
@@ -206,4 +208,31 @@ class AuthentikIntegration(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ProvisioningEvent(Base):
+    """One append-only provisioning-ledger event for a ``(user, provider)``.
+
+    The current state of a grant is the *latest* event for that pair (derived by query, never a
+    mutable row), so the log is tamper-evident and a disaster-recovery source of truth alongside
+    Authentik. Append-only: a DB trigger blocks UPDATE/DELETE (migration 0009). See
+    docs/PROVIDER_CONTRACT.md. The FK deliberately does not cascade — history outlives the user row.
+    """
+
+    __tablename__ = "provisioning_events"
+    __table_args__ = (Index("ix_provisioning_events_user_provider", "user_id", "provider_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)  # autoincrement → event ordinal
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    provider_id: Mapped[str] = mapped_column(String(64))
+    state: Mapped[ProvisionState] = mapped_column(_audit_enum(ProvisionState, 24))
+    # DB column is ``grant_data`` — ``grant`` is a reserved SQL keyword (Postgres); the Python
+    # attribute stays ``grant`` to match the contract.
+    grant: Mapped[dict[str, Any]] = mapped_column("grant_data", JSON, default=dict)
+    external_ref: Mapped[str | None] = mapped_column(String(255), default=None)
+    detail: Mapped[str | None] = mapped_column(Text, default=None)
+    partial: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
