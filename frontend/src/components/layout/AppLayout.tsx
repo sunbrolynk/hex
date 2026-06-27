@@ -8,6 +8,7 @@ export function AppLayout() {
     <div className="app">
       <header>
         <span>{user.username ?? user.email ?? 'Signed in'}</span>
+        {user.is_owner && <Link to="/invites">Invites</Link>}
         <button type="button" onClick={() => void logout()}>
           Log out
         </button>

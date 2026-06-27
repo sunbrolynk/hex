@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     session_lifetime_seconds: int = 60 * 60 * 8
     oidc_login_state_ttl_seconds: int = 600
 
+    # Invite acceptance throttle (per-client; the token is ≥256-bit, this is defense-in-depth +
+    # enumeration resistance on the public preview/accept endpoint).
+    invite_accept_max_attempts: int = 10
+    invite_accept_window_seconds: float = 60.0
+
     # Break-glass owner access (ADR 0008, SECURITY_MODEL §13) — the one local credential, for when
     # Authentik/OIDC is unreachable. DISABLED by default; enabling is validated at boot
     # (hex.breakglass.config) and refuses to boot if incompletely/insecurely configured.

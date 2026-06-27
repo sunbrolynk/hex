@@ -78,6 +78,8 @@ class AuditAction(StrEnum):
     BREAKGLASS_SUCCEEDED = "breakglass.login.succeeded"
     BREAKGLASS_FAILED = "breakglass.login.failed"
     BREAKGLASS_LOCKED_OUT = "breakglass.login.locked_out"
+    INVITE_CREATED = "invite.created"
+    INVITE_REVOKED = "invite.revoked"
 
 
 class AuditSeverity(StrEnum):
@@ -236,3 +238,26 @@ class ProvisioningEvent(Base):
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class Invite(Base):
+    """A single-use, expiring invite capability (non-negotiable #5).
+
+    The owner creates it; a prospective user accepts it once to begin signup. Only the token's
+    SHA-256 is stored (the raw token is shown to the owner once). ``default_grants`` maps provider
+    id → structured grant applied on signup; ``requestable`` is the provider-id allowlist the user
+    may later request. Single-use is enforced at acceptance (Slice 6-2) by setting ``accepted_at``.
+    """
+
+    __tablename__ = "invites"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    default_grants: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    requestable: Mapped[list[str]] = mapped_column(JSON, default=list)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    accepted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), default=None)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

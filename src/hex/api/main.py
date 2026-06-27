@@ -16,6 +16,7 @@ from starlette.types import Scope
 from hex.__version__ import __version__
 from hex.api.auth_routes import router as auth_router
 from hex.api.breakglass_routes import router as breakglass_router
+from hex.api.invite_routes import router as invite_router
 from hex.api.system_routes import router as system_router
 from hex.audit import AuditSigner
 from hex.breakglass import BreakGlassConfig
@@ -60,6 +61,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.setup_limiter = AttemptLimiter(
         settings.setup_unlock_max_attempts, settings.setup_unlock_window_seconds
     )
+    app.state.invite_limiter = AttemptLimiter(
+        settings.invite_accept_max_attempts, settings.invite_accept_window_seconds
+    )
     app.state.setup_lockout = LockoutCounter()
     app.state.breakglass_lockout = CooldownLimiter(
         settings.breakglass_max_attempts,
@@ -72,6 +76,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(system_router)
     app.include_router(auth_router)
     app.include_router(breakglass_router)
+    app.include_router(invite_router)
     _mount_spa(app, settings)
     return app
 

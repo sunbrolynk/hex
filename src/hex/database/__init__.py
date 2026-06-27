@@ -5,6 +5,7 @@ from hex.database.database import (
     build_sessionmaker,
     get_session,
 )
+from hex.database.invite_manager import InviteManager
 from hex.database.ledger_manager import LedgerManager
 from hex.database.login_state_manager import LoginStateManager
 from hex.database.models import (
@@ -15,6 +16,7 @@ from hex.database.models import (
     AuditSeverity,
     AuthentikIntegration,
     Base,
+    Invite,
     OIDCLoginState,
     ProvisioningEvent,
     SetupPhase,
@@ -36,6 +38,8 @@ __all__ = [
     "AuthentikIntegration",
     "AuthentikIntegrationManager",
     "Base",
+    "Invite",
+    "InviteManager",
     "LedgerManager",
     "LoginStateManager",
     "OIDCLoginState",
