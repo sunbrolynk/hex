@@ -60,6 +60,30 @@ reads the ledger to know what the user actually has, so a user configures only w
 been granted. v1 ships curated widgets + drag/drop layout + theming (no user code/CSS yet);
 the full GUI builder plus a power-user code/CSS mode is post-v1 — see ADR 0014.
 
+### Seamless access (no second login) — a dashboard goal
+
+**Goal: clicking a tile in HEx should drop the user straight into the service, already
+signed in — no re-authentication where the integration mode allows it.** This is a first-class
+UX goal of the dashboard, not an afterthought; how fully it is achievable is a pure function of
+the provider's `integration_mode`:
+
+- `sso_group` (OIDC / forward-auth behind Authentik) — **fully seamless, and largely free.**
+  Because HEx and the service share Authentik as the IdP, a user who already has an Authentik
+  session is logged in silently on click (OIDC SSO) or transparently allowed (forward-auth /
+  proxy). Push as many services into this bucket as possible precisely for this reason.
+- `api_local` (Jellyfin, Seerr) — **best-effort.** The app owns its own accounts, so true silent
+  SSO is only possible if the app itself supports SSO/OIDC; otherwise the tile is a clean
+  deep-link and the app may still prompt. Do not fake the app's login.
+- `external_invite` (Plex) — **not possible by design.** The user authenticates with their own
+  external account (plex.tv); HEx cannot and must not complete that login for them.
+- `manual` — no automation; the tile is just a link.
+
+> **Security boundary (non-negotiable #2):** "no second login" must always be achieved *through
+> Authentik* (real SSO), never by HEx forging or injecting identity into the downstream app. HEx
+> must never inject identity headers or synthesize credentials to bypass a real auth check — that
+> would violate the never-trust-injected-identity rule. Seamless = a genuine Authentik SSO session
+> carried through, not an auth bypass.
+
 ## 5. Request more access (the approval workflow layer)
 
 A user can request a service the owner marked **requestable**. This is **not** a fifth
