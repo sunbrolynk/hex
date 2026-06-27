@@ -1,0 +1,130 @@
+# HEx invitation-gated enrollment flow.
+#
+# Authentik's worker auto-applies this on start (mounted read-only at /blueprints/custom). It builds
+# the enrollment flow a HEx invite drops the user into: HEx mints a single-use Authentik invitation
+# (Slice 6-2b) and redirects to /if/flow/hex-enrollment/?itoken=<token>; the user sets their own
+# password HERE — Authentik stays the identity source of truth, HEx never mints credentials
+# (non-negotiable #1). continue_flow_without_invitation=false means there is NO open signup: only a
+# valid invitation can enroll. See session memory authentik-enrollment-recipe.
+#
+# Verified-live recipe (Slice 6-2a). A confirm-password field + match policy is a deliberate
+# fast-follow; this ships the minimal proven flow first.
+
+version: 1
+metadata:
+  name: HEx - invitation-gated enrollment flow
+
+entries:
+  # ── Prompt fields the prospective user fills in ──────────────────────────────
+  - model: authentik_stages_prompt.prompt
+    id: hex-prompt-email
+    identifiers:
+      name: hex-enrollment-email
+    attrs:
+      field_key: email
+      label: Email
+      type: email
+      required: true
+      order: 0
+      placeholder: you@example.com
+
+  - model: authentik_stages_prompt.prompt
+    id: hex-prompt-username
+    identifiers:
+      name: hex-enrollment-username
+    attrs:
+      field_key: username
+      label: Username
+      type: username
+      required: true
+      order: 1
+
+  - model: authentik_stages_prompt.prompt
+    id: hex-prompt-password
+    identifiers:
+      name: hex-enrollment-password
+    attrs:
+      field_key: password
+      label: Password
+      type: password
+      required: true
+      order: 2
+
+  # ── Stages ───────────────────────────────────────────────────────────────────
+  - model: authentik_stages_prompt.promptstage
+    id: hex-enrollment-prompt-stage
+    identifiers:
+      name: hex-enrollment-prompt
+    attrs:
+      fields:
+        - !KeyOf hex-prompt-email
+        - !KeyOf hex-prompt-username
+        - !KeyOf hex-prompt-password
+
+  - model: authentik_stages_invitation.invitationstage
+    id: hex-enrollment-invitation-stage
+    identifiers:
+      name: hex-enrollment-invitation
+    attrs:
+      # No open signup — a valid invitation token is REQUIRED to enroll. This stage only enforces
+      # that an invitation is PRESENT; single-use, short expiry, and flow-binding are properties of
+      # the invitation INSTANCE that HEx mints at runtime (Slice 6-2b). HEx MUST create invitations
+      # with single_use=true + a short `expires` + `flow` bound to this slug — otherwise a replayed
+      # enrollment URL could create duplicate accounts (user-write is always_create). That minting
+      # path is security-critical and gets the single-use/expiry abuse tests.
+      continue_flow_without_invitation: false
+
+  - model: authentik_stages_user_write.userwritestage
+    id: hex-enrollment-write-stage
+    identifiers:
+      name: hex-enrollment-write
+    attrs:
+      user_creation_mode: always_create
+      create_users_as_inactive: false
+
+  - model: authentik_stages_user_login.userloginstage
+    id: hex-enrollment-login-stage
+    identifiers:
+      name: hex-enrollment-login
+
+  # ── The enrollment flow ────────────────────────────────────────────────────
+  - model: authentik_flows.flow
+    id: hex-enrollment-flow
+    identifiers:
+      slug: hex-enrollment
+    attrs:
+      name: HEx Enrollment
+      title: Create your HEx account
+      designation: enrollment
+      authentication: require_unauthenticated
+
+  # ── Flow-stage bindings (invitation → prompt → write → login) ───────────────
+  - model: authentik_flows.flowstagebinding
+    id: hex-binding-invitation
+    identifiers:
+      target: !KeyOf hex-enrollment-flow
+      stage: !KeyOf hex-enrollment-invitation-stage
+      order: 0
+    attrs:
+      evaluate_on_plan: true
+
+  - model: authentik_flows.flowstagebinding
+    id: hex-binding-prompt
+    identifiers:
+      target: !KeyOf hex-enrollment-flow
+      stage: !KeyOf hex-enrollment-prompt-stage
+      order: 10
+
+  - model: authentik_flows.flowstagebinding
+    id: hex-binding-write
+    identifiers:
+      target: !KeyOf hex-enrollment-flow
+      stage: !KeyOf hex-enrollment-write-stage
+      order: 20
+
+  - model: authentik_flows.flowstagebinding
+    id: hex-binding-login
+    identifiers:
+      target: !KeyOf hex-enrollment-flow
+      stage: !KeyOf hex-enrollment-login-stage
+      order: 30
