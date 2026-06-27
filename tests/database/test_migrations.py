@@ -164,6 +164,46 @@ async def _assert_authentik_integration_schema(url: str) -> None:
         await engine.dispose()
 
 
+async def _assert_provisioning_ledger(url: str) -> None:
+    """0009 built the append-only provisioning ledger (named columns + the immutability trigger)."""
+    engine = create_async_engine(url)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "SELECT id, user_id, provider_id, state, grant_data, external_ref, detail, "
+                    "partial, occurred_at FROM provisioning_events"
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO users (authentik_sub, username, is_owner, is_break_glass) "
+                    "VALUES ('ledger-test', 'lt', false, false)"
+                )
+            )
+            uid = (
+                await conn.execute(text("SELECT id FROM users WHERE authentik_sub = 'ledger-test'"))
+            ).scalar_one()
+            await conn.execute(
+                text(
+                    "INSERT INTO provisioning_events "
+                    "(user_id, provider_id, state, grant_data, occurred_at) "
+                    "VALUES (:u, 'p', 'granted', '{}', now())"
+                ),
+                {"u": uid},
+            )
+        with pytest.raises(DBAPIError):  # UPDATE blocked by the immutability trigger
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text("UPDATE provisioning_events SET provider_id = 'x' WHERE provider_id = 'p'")
+                )
+        with pytest.raises(DBAPIError):  # DELETE blocked too
+            async with engine.begin() as conn:
+                await conn.execute(text("DELETE FROM provisioning_events WHERE provider_id = 'p'"))
+    finally:
+        await engine.dispose()
+
+
 def test_upgrade_downgrade_roundtrip() -> None:
     settings = Settings()
     cfg = build_config(settings)
@@ -175,6 +215,7 @@ def test_upgrade_downgrade_roundtrip() -> None:
     asyncio.run(_assert_auth_schema(settings.database_url))
     asyncio.run(_assert_audit_log_is_immutable(settings.database_url))
     asyncio.run(_assert_authentik_integration_schema(settings.database_url))
+    asyncio.run(_assert_provisioning_ledger(settings.database_url))
 
     command.downgrade(cfg, "base")
     command.upgrade(cfg, "head")
