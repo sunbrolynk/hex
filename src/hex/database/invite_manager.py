@@ -90,6 +90,34 @@ class InviteManager:
             return None  # expired — caller rolls back, so the burn is undone (not spent)
         return invite
 
+    async def link_to_user(self, nonce: str, user_id: int) -> Invite | None:
+        """Bind an accepted invite to the user who completed enrollment; None if no match.
+
+        Matched by the acceptance nonce (set in 6-2b, carried in the httponly cookie); first-wins
+        via ``accepted_by IS NULL`` so a replay can't re-bind. No commit — the caller owns the txn
+        (the bind commits atomically with the login session + audit).
+        """
+        nonce_hash = hash_token(nonce)
+        result = cast(
+            "CursorResult[Any]",
+            await self._session.execute(
+                update(Invite)
+                .where(Invite.accept_nonce_hash == nonce_hash, Invite.accepted_by.is_(None))
+                .values(accepted_by=user_id)
+            ),
+        )
+        if result.rowcount != 1:
+            return None
+        # Re-select by the just-written accepted_by too: with rowcount==1 exactly one row carries
+        # it, so this is single regardless of accept_nonce_hash not being unique-constrained.
+        return (
+            await self._session.execute(
+                select(Invite).where(
+                    Invite.accept_nonce_hash == nonce_hash, Invite.accepted_by == user_id
+                )
+            )
+        ).scalar_one()
+
     async def resolve_valid(self, raw_token: str) -> Invite | None:
         """The invite for ``raw_token`` iff still acceptable (unexpired, unrevoked, unaccepted)."""
         invite = (

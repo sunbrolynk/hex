@@ -81,6 +81,7 @@ class AuditAction(StrEnum):
     INVITE_CREATED = "invite.created"
     INVITE_REVOKED = "invite.revoked"
     INVITE_ACCEPTED = "invite.accepted"
+    INVITE_LINKED = "invite.linked"
 
 
 class AuditSeverity(StrEnum):

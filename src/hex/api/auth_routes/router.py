@@ -12,9 +12,11 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hex.api.auth_routes.dependencies import SESSION_COOKIE, get_oidc_client, require_user
+from hex.api.invite_routes.router import INVITE_COOKIE
 from hex.api.schemas import UserResponse
 from hex.database import (
     AuditLogManager,
+    InviteManager,
     LoginStateManager,
     SessionManager,
     User,
@@ -130,6 +132,14 @@ async def auth_callback(
     user = await UserManager(session).upsert(
         authentik_sub=claims.sub, username=claims.preferred_username, email=claims.email
     )
+    # If the user arrived via invite enrollment (6-2b set the nonce cookie), bind the invite to them
+    # now. A missing/forged/already-bound nonce is a no-op (login proceeds); a DB fault rolls back
+    # with the rest below (fail-secure — no session minted). The bind commits atomically with the
+    # session + audit below.
+    invite_nonce = request.cookies.get(INVITE_COOKIE)
+    linked_invite = (
+        await InviteManager(session).link_to_user(invite_nonce, user.id) if invite_nonce else None
+    )
     raw = await SessionManager(session, lifetime_seconds=settings.session_lifetime_seconds).create(
         user
     )
@@ -142,6 +152,15 @@ async def auth_callback(
             actor=actor,
             target=f"user:{user.id}",
         )
+        if linked_invite is not None:
+            # Binding a capability to an identity is a privileged action (#7).
+            await audit.append(
+                action=AuditAction.INVITE_LINKED,
+                severity=AuditSeverity.NOTICE,
+                result=AuditResult.SUCCESS,
+                actor=f"user:{user.id}",
+                target=f"invite:{linked_invite.id}",
+            )
         await session.commit()
     except Exception:
         await session.rollback()
@@ -157,6 +176,8 @@ async def auth_callback(
         samesite="lax",
         path="/",
     )
+    if invite_nonce:
+        response.delete_cookie(INVITE_COOKIE, path="/")  # enrollment trip is over
     return response
 
 

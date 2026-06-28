@@ -1,6 +1,7 @@
 """OIDC BFF auth routes: login redirect, callback validation, /me, logout — and abuse cases."""
 
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -17,12 +18,46 @@ from hex.config import Settings
 from hex.database import (
     AuditLogManager,
     AuthentikIntegrationManager,
+    Invite,
     LoginStateManager,
+    User,
     UserSession,
 )
 from hex.database.models import AuditLogEntry, OIDCLoginState
+from hex.setup import hash_token
 from tests.conftest import make_settings
 from tests.oidc import _oidc
+
+
+async def _seed_accepted_invite(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    *,
+    nonce: str,
+    accepted_by: int | None = None,
+) -> None:
+    """An invite already burned in 6-2b, awaiting the 6-2c link via its acceptance nonce."""
+    async with sessionmaker() as session:
+        owner = User(authentik_sub="seed-owner", username="seed-owner", is_owner=True)
+        session.add(owner)
+        await session.flush()
+        session.add(
+            Invite(
+                token_hash=hash_token(f"tok-{nonce}"),
+                created_by=owner.id,
+                default_grants={},
+                requestable=[],
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+                accepted_at=datetime.now(UTC),
+                accept_nonce_hash=hash_token(nonce),
+                accepted_by=accepted_by,
+            )
+        )
+        await session.commit()
+
+
+async def _linked_invite_owner(sessionmaker: async_sessionmaker[AsyncSession]) -> int | None:
+    async with sessionmaker() as session:
+        return (await session.execute(select(Invite))).scalar_one().accepted_by
 
 
 def _settings(**overrides: object) -> Settings:
@@ -212,6 +247,105 @@ async def test_callback_happy_path_sets_cookie_and_audits(
     assert "secure" not in set_cookie.lower()  # dev (env != production)
     assert await _audit_actions(sessionmaker) == ["oidc.login.succeeded"]
     assert await _session_count(sessionmaker) == 1
+
+
+@respx.mock
+async def test_callback_links_invite_via_nonce_cookie(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    _mock_oidc()
+    await _seed_state(sessionmaker, state="good")
+    await _seed_accepted_invite(sessionmaker, nonce="nonce-123")
+    client.cookies.set("hex_invite", "nonce-123")
+
+    resp = await client.get(
+        "/auth/callback", params={"code": "c", "state": "good"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    # The invite is bound to the freshly-created (non-owner) user, and the cookie is cleared.
+    async with sessionmaker() as session:
+        new_user = (
+            await session.execute(select(User).where(User.is_owner.is_(False)))
+        ).scalar_one()
+    assert await _linked_invite_owner(sessionmaker) == new_user.id
+    assert "invite.linked" in await _audit_actions(sessionmaker)  # privileged action audited (#7)
+    cleared = [c for c in resp.headers.get_list("set-cookie") if c.startswith("hex_invite=")]
+    assert cleared and "Max-Age=0" in cleared[0]
+
+
+@respx.mock
+async def test_callback_unknown_nonce_does_not_link_but_login_succeeds(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    _mock_oidc()
+    await _seed_state(sessionmaker, state="good")
+    await _seed_accepted_invite(sessionmaker, nonce="real-nonce")
+    client.cookies.set("hex_invite", "forged-nonce")  # no matching invite
+
+    resp = await client.get(
+        "/auth/callback", params={"code": "c", "state": "good"}, follow_redirects=False
+    )
+    assert resp.status_code == 302  # login still works
+    assert await _linked_invite_owner(sessionmaker) is None  # nothing bound
+
+
+@respx.mock
+async def test_callback_empty_nonce_cookie_does_not_link(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    # An empty cookie value must be treated as absent — no spurious bind, no clear-cookie emitted.
+    _mock_oidc()
+    await _seed_state(sessionmaker, state="good")
+    await _seed_accepted_invite(sessionmaker, nonce="real-nonce")
+    client.cookies.set("hex_invite", "")
+
+    resp = await client.get(
+        "/auth/callback", params={"code": "c", "state": "good"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert await _linked_invite_owner(sessionmaker) is None
+    assert not [c for c in resp.headers.get_list("set-cookie") if c.startswith("hex_invite=")]
+
+
+@respx.mock
+async def test_callback_invite_bind_rolls_back_when_login_persist_fails(
+    client: AsyncClient,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The bind commits atomically with the login: if the login audit/commit fails, the invite must
+    # NOT be left bound to a user whose session never persisted.
+    _mock_oidc()
+    await _seed_state(sessionmaker, state="good")
+    await _seed_accepted_invite(sessionmaker, nonce="nonce-rb")
+    client.cookies.set("hex_invite", "nonce-rb")
+
+    async def boom(self: AuditLogManager, **kwargs: object) -> None:
+        raise RuntimeError("audit backend down")
+
+    monkeypatch.setattr(AuditLogManager, "append", boom)
+    resp = await client.get(
+        "/auth/callback", params={"code": "c", "state": "good"}, follow_redirects=False
+    )
+    assert resp.status_code == 302  # clean redirect, not 500
+    assert await _session_count(sessionmaker) == 0  # session rolled back
+    assert await _linked_invite_owner(sessionmaker) is None  # bind rolled back too
+
+
+@respx.mock
+async def test_callback_does_not_rebind_an_already_linked_invite(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    _mock_oidc()
+    await _seed_state(sessionmaker, state="good")
+    await _seed_accepted_invite(sessionmaker, nonce="nonce-x", accepted_by=999)
+    client.cookies.set("hex_invite", "nonce-x")
+
+    resp = await client.get(
+        "/auth/callback", params={"code": "c", "state": "good"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert await _linked_invite_owner(sessionmaker) == 999  # first-wins, not rebound
 
 
 @respx.mock
