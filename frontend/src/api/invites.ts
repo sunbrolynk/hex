@@ -41,3 +41,40 @@ export async function revokeInvite(id: number): Promise<void> {
   const res = await fetch(`/invites/${id}/revoke`, { method: 'POST' })
   if (!res.ok) throw new Error(`revoke ${res.status}`)
 }
+
+// --- Public acceptance surface (the invited user, no session yet) ---
+
+export interface InvitePreview {
+  requestable: string[]
+  grant_providers: string[]
+  expires_at: string
+}
+
+// null = invalid/expired/revoked/unknown (uniform 404); throws only on an unexpected error.
+export async function previewInvite(token: string): Promise<InvitePreview | null> {
+  const res = await fetch(`/invite/${token}/preview`)
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`preview ${res.status}`)
+  return (await res.json()) as InvitePreview
+}
+
+export type AcceptResult =
+  | { ok: true; enroll_url: string }
+  | { ok: false; reason: 'gone' | 'throttled' | 'unavailable' | 'error' }
+
+// On success the caller redirects to enroll_url (Authentik enrollment). Status → reason:
+// 404 gone (spent/expired), 429 throttled, 503 enrollment unavailable, else generic error.
+export async function acceptInvite(token: string): Promise<AcceptResult> {
+  let res: Response
+  try {
+    res = await fetch(`/invite/${token}/accept`, { method: 'POST' })
+  } catch {
+    return { ok: false, reason: 'error' }
+  }
+  if (res.ok)
+    return { ok: true, enroll_url: ((await res.json()) as { enroll_url: string }).enroll_url }
+  if (res.status === 404) return { ok: false, reason: 'gone' }
+  if (res.status === 429) return { ok: false, reason: 'throttled' }
+  if (res.status === 503) return { ok: false, reason: 'unavailable' }
+  return { ok: false, reason: 'error' }
+}

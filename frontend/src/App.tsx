@@ -5,6 +5,7 @@ import { SetupGate } from './components/setup/SetupGate'
 import { AboutPage } from './pages/about/AboutPage'
 import { BreakGlassLogin } from './pages/breakglass/BreakGlassLogin'
 import { HomePage } from './pages/home/HomePage'
+import { InviteAcceptPage } from './pages/invite-accept/InviteAcceptPage'
 import { InvitesPage } from './pages/invites/InvitesPage'
 import { NotFound } from './pages/notfound/NotFound'
 
@@ -25,6 +26,7 @@ export function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/breakglass" element={<BreakGlassLogin />} />
+        <Route path="/invite/:token" element={<InviteAcceptPage />} />
         <Route element={<GatedApp />}>
           <Route element={<AppLayout />}>
             <Route index element={<HomePage />} />

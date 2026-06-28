@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     # enumeration resistance on the public preview/accept endpoint).
     invite_accept_max_attempts: int = 10
     invite_accept_window_seconds: float = 60.0
+    # Slug of the shipped Authentik enrollment flow (deploy/authentik/blueprints/hex-enrollment)
+    # and the TTL of the single-use Authentik invitation HEx mints to drive it.
+    enrollment_flow_slug: str = "hex-enrollment"
+    enrollment_invitation_ttl_seconds: int = 3600
 
     # Break-glass owner access (ADR 0008, SECURITY_MODEL §13) — the one local credential, for when
     # Authentik/OIDC is unreachable. DISABLED by default; enabling is validated at boot

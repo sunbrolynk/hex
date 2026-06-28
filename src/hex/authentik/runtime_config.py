@@ -6,6 +6,8 @@ external-mode operators configure purely via env while bundled-mode self-wires i
 The confidential client secret is decrypted here, at the point of use, never stored decrypted.
 """
 
+from dataclasses import dataclass
+
 from pydantic import SecretStr
 
 from hex.config import Settings
@@ -39,3 +41,35 @@ def resolve_oidc_config(
         authentik_oidc_client_secret=SecretStr(secret),
         authentik_oidc_app_slug=settings.authentik_oidc_app_slug,
     )
+
+
+@dataclass(frozen=True)
+class SACredentials:
+    """The rotated service-account credential for runtime management calls (minting invitations).
+
+    ``api_base`` is the server-to-server base (internal split-horizon) for API calls;
+    ``browser_base`` is the public base used to build user-facing URLs (the enrollment redirect).
+    """
+
+    api_base: str
+    browser_base: str
+    token: str
+
+
+def resolve_sa_credentials(
+    settings: Settings, integration: AuthentikIntegration | None, broker: SecretsBroker
+) -> SACredentials | None:
+    """Decrypt the rotated SA token at point of use; None if HEx isn't wired to Authentik yet.
+
+    Raises:
+        InvalidToken: if the persisted SA token can't be decrypted (wrong/rotated KEK or tampering);
+            the caller treats that as fail-secure "not configured", not a 500.
+    """
+    if integration is None or not integration.sa_token_enc:
+        return None
+    token = broker.decrypt(integration.sa_token_enc).decode()
+    browser_base = settings.authentik_base_url or integration.base_url
+    api_base = settings.authentik_internal_base_url or integration.internal_base_url or browser_base
+    if not browser_base:
+        return None
+    return SACredentials(api_base=api_base, browser_base=browser_base, token=token)

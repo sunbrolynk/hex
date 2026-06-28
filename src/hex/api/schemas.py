@@ -92,3 +92,9 @@ class InvitePreviewResponse(BaseModel):
     requestable: list[str]
     grant_providers: list[str]
     expires_at: datetime
+
+
+class InviteAcceptResponse(BaseModel):
+    """Acceptance outcome: where to send the user to enroll in Authentik."""
+
+    enroll_url: str
