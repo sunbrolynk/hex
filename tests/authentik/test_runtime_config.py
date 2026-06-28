@@ -6,6 +6,7 @@ import os
 import pytest
 
 from hex.authentik import resolve_oidc_config
+from hex.authentik.runtime_config import resolve_sa_credentials
 from hex.database.models import AuthentikIntegration
 from hex.secrets.broker import SecretsBroker
 from hex.secrets.errors import InvalidToken
@@ -116,6 +117,69 @@ def test_partial_db_row_without_secret_is_unconfigured_and_skips_decrypt() -> No
     )
     cfg = resolve_oidc_config(make_settings(), row, broker)
     assert not cfg.oidc_configured
+
+
+def test_sa_credentials_resolved_from_db_with_internal_api_base() -> None:
+    broker = _broker()
+    row = AuthentikIntegration(
+        id=1,
+        base_url="http://pub",
+        internal_base_url="http://int",
+        client_id="x",
+        sa_token_enc=broker.encrypt("sa-tok"),
+    )
+    sa = resolve_sa_credentials(make_settings(), row, broker)
+    assert sa is not None
+    assert sa.token == "sa-tok"
+    assert sa.browser_base == "http://pub"  # public, for the user redirect
+    assert sa.api_base == "http://int"  # internal, for server-to-server API calls
+
+
+def test_sa_credentials_api_base_falls_back_to_browser_base() -> None:
+    broker = _broker()
+    row = AuthentikIntegration(
+        id=1, base_url="http://pub", client_id="x", sa_token_enc=broker.encrypt("t")
+    )
+    sa = resolve_sa_credentials(make_settings(), row, broker)
+    assert sa is not None
+    assert sa.api_base == "http://pub"
+
+
+def test_sa_credentials_none_when_unwired() -> None:
+    assert resolve_sa_credentials(make_settings(), None, _broker()) is None
+    row = AuthentikIntegration(id=1, base_url="http://pub", client_id="x", sa_token_enc=None)
+    assert resolve_sa_credentials(make_settings(), row, _broker()) is None
+
+
+def test_sa_credentials_none_when_no_base_url() -> None:
+    # SA token present but no base URL anywhere (env or DB) → fail-secure "not configured".
+    broker = _broker()
+    row = AuthentikIntegration(id=1, base_url="", client_id="x", sa_token_enc=broker.encrypt("t"))
+    assert resolve_sa_credentials(make_settings(), row, broker) is None
+
+
+def test_sa_credentials_env_internal_base_overrides_db() -> None:
+    broker = _broker()
+    row = AuthentikIntegration(
+        id=1,
+        base_url="http://db",
+        internal_base_url="http://db-int",
+        client_id="x",
+        sa_token_enc=broker.encrypt("t"),
+    )
+    settings = make_settings(
+        authentik_base_url="http://env", authentik_internal_base_url="http://env-int"
+    )
+    sa = resolve_sa_credentials(settings, row, broker)
+    assert sa is not None
+    assert sa.browser_base == "http://env"
+    assert sa.api_base == "http://env-int"
+
+
+def test_sa_credentials_undecryptable_token_raises() -> None:
+    row = AuthentikIntegration(id=1, base_url="http://db", client_id="x", sa_token_enc="garbage")
+    with pytest.raises(InvalidToken):
+        resolve_sa_credentials(make_settings(), row, _broker())
 
 
 def test_db_app_slug_is_ignored_in_favor_of_env() -> None:

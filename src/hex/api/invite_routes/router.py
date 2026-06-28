@@ -11,24 +11,40 @@ import time
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hex.api.auth_routes.dependencies import require_owner
 from hex.api.guards import forbid_until_setup_complete
 from hex.api.schemas import (
+    InviteAcceptResponse,
     InviteCreatedResponse,
     InviteCreateRequest,
     InvitePreviewResponse,
     InviteResponse,
 )
-from hex.database import AuditLogManager, Invite, InviteManager, User, get_session
+from hex.authentik.errors import AuthentikError
+from hex.authentik.management_client import AuthentikManagementClient
+from hex.authentik.runtime_config import resolve_sa_credentials
+from hex.database import (
+    AuditLogManager,
+    AuthentikIntegrationManager,
+    Invite,
+    InviteManager,
+    User,
+    get_session,
+)
 from hex.database.models import AuditAction, AuditResult, AuditSeverity
+from hex.secrets.errors import InvalidToken
 from hex.setup import AttemptLimiter
 
 log = logging.getLogger("hex.invite")
 router = APIRouter(tags=["invites"])
+
+# httponly cookie carrying the accepted HEx invite token through the Authentik enrollment trip.
+# Slice 6-2c reads it at the OIDC callback to set accepted_by + provision. Read by auth_routes.
+INVITE_COOKIE = "hex_invite"  # noqa: S105 — cookie name, not a credential
 
 _OWNER_ONLY = (Depends(forbid_until_setup_complete),)
 
@@ -133,13 +149,16 @@ async def revoke_invite(
     return _to_response(invite)
 
 
-@router.get("/invite/{token}")
+@router.get("/invite/{token}/preview")
 async def preview_invite(
     token: str,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> InvitePreviewResponse:
-    """Public, throttled preview of what a valid invite offers. Any bad token → a uniform 404."""
+    """Public, throttled preview of what a valid invite offers. Any bad token → a uniform 404.
+
+    Lives at ``/preview`` so the bare ``/invite/{token}`` path is free for the SPA acceptance page.
+    """
     limiter: AttemptLimiter = request.app.state.invite_limiter
     client = request.client.host if request.client else "unknown"
     now = time.monotonic()
@@ -156,3 +175,90 @@ async def preview_invite(
         grant_providers=sorted(invite.default_grants),
         expires_at=invite.expires_at,
     )
+
+
+@router.post("/invite/{token}/accept")
+async def accept_invite(
+    token: str,
+    request: Request,
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> InviteAcceptResponse:
+    """Consume the invite (single-use) and mint an Authentik enrollment invitation to redirect to.
+
+    Atomic + fail-secure: the HEx invite is burned only if a matching Authentik invitation is
+    successfully minted — if minting (or the audit/commit) fails, the burn is rolled back so the
+    invite is not wasted. A bad/expired/spent token returns a uniform 404.
+    """
+    app = request.app
+    settings = app.state.settings
+    limiter: AttemptLimiter = app.state.invite_limiter
+    client = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    if limiter.blocked(client, now):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="too many attempts"
+        )
+
+    invite = await InviteManager(session).accept(token)  # atomic burn (uncommitted)
+    if invite is None:
+        await session.rollback()
+        limiter.record_failure(client, now)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+
+    integration = await AuthentikIntegrationManager(session).get()
+    try:
+        sa = resolve_sa_credentials(settings, integration, app.state.secrets)
+    except InvalidToken:
+        sa = None  # undecryptable SA token → fail-secure "not configured"
+    if sa is None:
+        await session.rollback()  # don't spend the invite when enrollment can't proceed
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enrollment unavailable"
+        )
+
+    client_api = AuthentikManagementClient(sa.api_base, sa.token, app.state.http)
+    try:
+        itoken = await client_api.create_invitation(
+            name=f"hex-invite-{invite.id}",
+            flow_slug=settings.enrollment_flow_slug,
+            fixed_data={"hex_invite_id": invite.id},
+            ttl_seconds=settings.enrollment_invitation_ttl_seconds,
+        )
+    except AuthentikError:
+        await session.rollback()  # Authentik mint failed → roll back the burn (invite not spent)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enrollment unavailable"
+        ) from None
+
+    # If the commit below fails the burn rolls back (invite reusable), but the Authentik invitation
+    # just minted is orphaned. It's single-use + short-TTL, so it self-expires unused — a benign,
+    # bounded artifact, and the HEx hard-cap-of-1 still holds.
+    try:
+        await AuditLogManager(session, app.state.audit_signer).append(
+            action=AuditAction.INVITE_ACCEPTED,
+            severity=AuditSeverity.NOTICE,
+            result=AuditResult.SUCCESS,
+            actor=f"client:{client}",
+            target=f"invite:{invite.id}",
+        )
+        await session.commit()
+    except SQLAlchemyError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database unavailable"
+        ) from exc
+
+    response.set_cookie(
+        INVITE_COOKIE,
+        token,
+        max_age=settings.enrollment_invitation_ttl_seconds,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+    enroll_url = (
+        f"{sa.browser_base.rstrip('/')}/if/flow/{settings.enrollment_flow_slug}/?itoken={itoken}"
+    )
+    return InviteAcceptResponse(enroll_url=enroll_url)

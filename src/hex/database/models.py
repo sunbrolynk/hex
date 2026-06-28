@@ -80,6 +80,7 @@ class AuditAction(StrEnum):
     BREAKGLASS_LOCKED_OUT = "breakglass.login.locked_out"
     INVITE_CREATED = "invite.created"
     INVITE_REVOKED = "invite.revoked"
+    INVITE_ACCEPTED = "invite.accepted"
 
 
 class AuditSeverity(StrEnum):

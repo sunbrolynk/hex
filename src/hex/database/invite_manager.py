@@ -6,9 +6,9 @@ returned to the owner once. No commit — the caller owns the transaction.
 """
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hex.database.models import Invite
@@ -57,6 +57,37 @@ class InviteManager:
         if invite is None or invite.revoked_at is not None or invite.accepted_at is not None:
             return None
         invite.revoked_at = datetime.now(UTC)
+        return invite
+
+    async def accept(self, raw_token: str) -> Invite | None:
+        """Atomically consume the invite (hard cap of 1) and return it, or None if unacceptable.
+
+        Single-use is a DB guarantee: the conditional UPDATE's ``accepted_at IS NULL`` WHERE clause
+        means only the first of two concurrent accepts flips the row (rowcount == 1) — no read-then-
+        write race. Expiry is checked after (the burn is uncommitted, so the caller rolls back and
+        the invite is not spent if expired). No commit — the caller owns the transaction.
+        """
+        token_hash = hash_token(raw_token)
+        now = datetime.now(UTC)
+        result = cast(
+            "CursorResult[Any]",
+            await self._session.execute(
+                update(Invite)
+                .where(
+                    Invite.token_hash == token_hash,
+                    Invite.accepted_at.is_(None),
+                    Invite.revoked_at.is_(None),
+                )
+                .values(accepted_at=now)
+            ),
+        )
+        if result.rowcount != 1:
+            return None
+        invite = (
+            await self._session.execute(select(Invite).where(Invite.token_hash == token_hash))
+        ).scalar_one()
+        if _aware(invite.expires_at) <= now:
+            return None  # expired — caller rolls back, so the burn is undone (not spent)
         return invite
 
     async def resolve_valid(self, raw_token: str) -> Invite | None:

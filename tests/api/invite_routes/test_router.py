@@ -1,20 +1,51 @@
 """Invite routes: owner CRUD (require_owner), the public preview, and the capability abuse cases."""
 
+import importlib
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 import pytest_asyncio
+import respx
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from hex.api.main import create_app
+from hex.authentik.runtime_config import SACredentials
 from hex.database import AuditLogManager, Invite, InviteManager, SessionManager, User
 from hex.database.models import AuditLogEntry, SetupPhase, SetupState
+from hex.secrets.errors import InvalidToken
 from hex.setup import hash_token
 from tests.conftest import make_settings
+
+_AK = "http://ak.test"
+# import_module returns the real submodule (plain `import …router` binds the re-exported APIRouter).
+invite_router_mod = importlib.import_module("hex.api.invite_routes.router")
+
+
+def _stub_sa(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        invite_router_mod,
+        "resolve_sa_credentials",
+        lambda *a: SACredentials(api_base=_AK, browser_base=_AK, token="sa-tok"),
+    )
+
+
+def _mock_authentik(*, mint_status: int = 201) -> None:
+    respx.get(f"{_AK}/api/v3/flows/instances/").mock(
+        return_value=httpx.Response(200, json={"results": [{"pk": "flow-pk"}]})
+    )
+    respx.post(f"{_AK}/api/v3/stages/invitation/invitations/").mock(
+        return_value=httpx.Response(mint_status, json={"pk": "itok-123"})
+    )
+
+
+async def _make_invite(client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]) -> str:
+    await _auth(client, sessionmaker)
+    return str((await client.post("/invites", json={})).json()["token"])
 
 
 @pytest_asyncio.fixture
@@ -170,7 +201,7 @@ async def test_preview_valid_invite(
             json={"requestable": ["plex"], "default_grants": {"jellyfin": {"libraries": ["m"]}}},
         )
     ).json()["token"]
-    preview = await client.get(f"/invite/{token}")
+    preview = await client.get(f"/invite/{token}/preview")
     assert preview.status_code == 200
     body = preview.json()
     assert body["requestable"] == ["plex"]
@@ -178,7 +209,7 @@ async def test_preview_valid_invite(
 
 
 async def test_preview_unknown_token_is_uniform_404(client: AsyncClient) -> None:
-    assert (await client.get("/invite/not-a-real-token")).status_code == 404
+    assert (await client.get("/invite/not-a-real-token/preview")).status_code == 404
 
 
 async def test_preview_revoked_invite_is_404(
@@ -187,7 +218,7 @@ async def test_preview_revoked_invite_is_404(
     await _auth(client, sessionmaker)
     created = (await client.post("/invites", json={})).json()
     await client.post(f"/invites/{created['id']}/revoke", json={})
-    assert (await client.get(f"/invite/{created['token']}")).status_code == 404
+    assert (await client.get(f"/invite/{created['token']}/preview")).status_code == 404
 
 
 async def test_preview_expired_invite_is_404(
@@ -210,7 +241,7 @@ async def test_preview_expired_invite_is_404(
             )
         )
         await session.commit()
-    assert (await client.get(f"/invite/{raw}")).status_code == 404
+    assert (await client.get(f"/invite/{raw}/preview")).status_code == 404
 
 
 async def test_list_shows_accepted_and_expired_status(
@@ -273,10 +304,184 @@ async def test_revoke_db_failure_is_503(
     assert (await client.post(f"/invites/{created['id']}/revoke", json={})).status_code == 503
 
 
+@respx.mock
+async def test_accept_burns_invite_and_returns_enroll_url(
+    client: AsyncClient,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = await _make_invite(client, sessionmaker)
+    _stub_sa(monkeypatch)
+    _mock_authentik()
+
+    resp = await client.post(f"/invite/{token}/accept")
+    assert resp.status_code == 200
+    assert resp.json()["enroll_url"] == f"{_AK}/if/flow/hex-enrollment/?itoken=itok-123"
+    assert "hex_invite=" in resp.headers.get("set-cookie", "")
+    assert "invite.accepted" in await _audit_actions(sessionmaker)
+
+    # The accepted-invite audit row is complete (actor/target/severity/result), not just present.
+    async with sessionmaker() as session:
+        invite_id = (await session.execute(select(Invite))).scalar_one().id
+        row = (
+            await session.execute(
+                select(AuditLogEntry).where(AuditLogEntry.action == "invite.accepted")
+            )
+        ).scalar_one()
+    assert row.severity == "notice"
+    assert row.result == "success"
+    assert row.target == f"invite:{invite_id}"
+    assert row.actor.startswith("client:")
+
+    # Single-use: the second accept of the same token is refused (atomic burn already happened).
+    again = await client.post(f"/invite/{token}/accept")
+    assert again.status_code == 404
+
+
+@respx.mock
+async def test_accept_uses_browser_base_for_redirect_and_api_base_for_calls(
+    client: AsyncClient,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Split-horizon: the Authentik API is called on the internal base; the user-facing enroll_url
+    # uses the public base. A swap of the two must be caught here.
+    token = await _make_invite(client, sessionmaker)
+    api, pub = "http://int.test", "http://pub.test"
+    monkeypatch.setattr(
+        invite_router_mod,
+        "resolve_sa_credentials",
+        lambda *a: SACredentials(api_base=api, browser_base=pub, token="sa"),
+    )
+    respx.get(f"{api}/api/v3/flows/instances/").mock(
+        return_value=httpx.Response(200, json={"results": [{"pk": "flow-pk"}]})
+    )
+    respx.post(f"{api}/api/v3/stages/invitation/invitations/").mock(
+        return_value=httpx.Response(201, json={"pk": "itok-9"})
+    )
+    resp = await client.post(f"/invite/{token}/accept")
+    assert resp.status_code == 200
+    assert resp.json()["enroll_url"] == f"{pub}/if/flow/hex-enrollment/?itoken=itok-9"
+
+
+async def test_accept_unknown_token_is_404(client: AsyncClient) -> None:
+    assert (await client.post("/invite/not-a-real-token/accept")).status_code == 404
+
+
+async def test_accept_expired_invite_is_404_and_not_spent(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    # An expired-but-unaccepted invite: the atomic burn matches but the expiry check rolls it back.
+    raw = "expired-accept-token"
+    async with sessionmaker() as session:
+        session.add(SetupState(id=1, phase=SetupPhase.COMPLETE))
+        owner = User(authentik_sub="o", username="o", is_owner=True)
+        session.add(owner)
+        await session.flush()
+        session.add(
+            Invite(
+                token_hash=hash_token(raw),
+                created_by=owner.id,
+                default_grants={},
+                requestable=[],
+                expires_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+        await session.commit()
+    assert (await client.post(f"/invite/{raw}/accept")).status_code == 404
+    async with sessionmaker() as session:
+        invite = (await session.execute(select(Invite))).scalar_one()
+    assert invite.accepted_at is None  # rolled back — not spent
+
+
+async def test_accept_503_and_not_spent_when_not_wired(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    # No Authentik integration row → resolve_sa_credentials returns None → 503, invite NOT spent.
+    token = await _make_invite(client, sessionmaker)
+    assert (await client.post(f"/invite/{token}/accept")).status_code == 503
+    assert (await client.get(f"/invite/{token}/preview")).status_code == 200  # still acceptable
+
+
+@respx.mock
+async def test_accept_rolls_back_burn_when_mint_fails(
+    client: AsyncClient,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = await _make_invite(client, sessionmaker)
+    _stub_sa(monkeypatch)
+    _mock_authentik(mint_status=500)  # Authentik invitation create fails
+
+    assert (await client.post(f"/invite/{token}/accept")).status_code == 503
+    # The HEx invite must NOT be spent if the Authentik invitation couldn't be minted.
+    assert (await client.get(f"/invite/{token}/preview")).status_code == 200
+
+
+async def test_accept_is_rate_limited(client: AsyncClient) -> None:
+    for _ in range(10):
+        assert (await client.post("/invite/bad/accept")).status_code == 404
+    assert (await client.post("/invite/bad/accept")).status_code == 429
+
+
+async def test_accept_503_on_undecryptable_sa_token(
+    client: AsyncClient,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = await _make_invite(client, sessionmaker)
+
+    def boom(*args: object) -> SACredentials:
+        raise InvalidToken
+
+    monkeypatch.setattr(invite_router_mod, "resolve_sa_credentials", boom)
+    assert (await client.post(f"/invite/{token}/accept")).status_code == 503
+    assert (await client.get(f"/invite/{token}/preview")).status_code == 200  # not spent
+
+
+@respx.mock
+async def test_accept_503_and_not_spent_when_audit_write_fails(
+    client: AsyncClient,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The audit append + commit share one try-block; a failure there rolls back the burn.
+    token = await _make_invite(client, sessionmaker)
+    _stub_sa(monkeypatch)
+    _mock_authentik()
+
+    async def boom(self: AuditLogManager, **kwargs: object) -> None:
+        raise OperationalError("audit", {}, Exception("db down"))
+
+    monkeypatch.setattr(AuditLogManager, "append", boom)
+    assert (await client.post(f"/invite/{token}/accept")).status_code == 503
+    assert (await client.get(f"/invite/{token}/preview")).status_code == 200  # rolled back
+
+
+async def test_accept_is_single_use_at_manager_level(
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    # Direct proof of the atomic burn: two accepts of the same token, one wins, one gets None.
+    async with sessionmaker() as session:
+        owner = User(authentik_sub="o", username="o", is_owner=True)
+        session.add(owner)
+        await session.flush()
+        _, raw = await InviteManager(session).create(
+            owner_id=owner.id, default_grants={}, requestable=[], ttl_seconds=3600
+        )
+        await session.commit()
+    async with sessionmaker() as session:
+        manager = InviteManager(session)
+        first = await manager.accept(raw)
+        second = await manager.accept(raw)
+    assert first is not None
+    assert second is None
+
+
 async def test_preview_is_rate_limited(
     client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
 ) -> None:
     # Default limiter is 10 failures / 60s; the 11th is throttled.
     for _ in range(10):
-        assert (await client.get("/invite/bad")).status_code == 404
-    assert (await client.get("/invite/bad")).status_code == 429
+        assert (await client.get("/invite/bad/preview")).status_code == 404
+    assert (await client.get("/invite/bad/preview")).status_code == 429
