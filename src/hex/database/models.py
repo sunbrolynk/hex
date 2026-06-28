@@ -260,5 +260,9 @@ class Invite(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     accepted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), default=None)
+    # SHA-256 of a server-minted nonce set at acceptance and carried in an httponly cookie through
+    # the Authentik enrollment trip; Slice 6-2c looks the invite up by it to provision. A fresh
+    # capability (not the burned token) so a guessed/forged cookie can't hijack provisioning.
+    accept_nonce_hash: Mapped[str | None] = mapped_column(String(64), default=None)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

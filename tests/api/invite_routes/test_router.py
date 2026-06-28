@@ -317,12 +317,18 @@ async def test_accept_burns_invite_and_returns_enroll_url(
     resp = await client.post(f"/invite/{token}/accept")
     assert resp.status_code == 200
     assert resp.json()["enroll_url"] == f"{_AK}/if/flow/hex-enrollment/?itoken=itok-123"
-    assert "hex_invite=" in resp.headers.get("set-cookie", "")
     assert "invite.accepted" in await _audit_actions(sessionmaker)
+
+    # The cookie carries a fresh server nonce — NOT the raw (now-burned) invite token — and its hash
+    # is persisted for the 6-2c lookup.
+    cookie = resp.cookies.get("hex_invite")
+    assert cookie and cookie != token
 
     # The accepted-invite audit row is complete (actor/target/severity/result), not just present.
     async with sessionmaker() as session:
-        invite_id = (await session.execute(select(Invite))).scalar_one().id
+        stored = (await session.execute(select(Invite))).scalar_one()
+        invite_id = stored.id
+        assert stored.accept_nonce_hash == hash_token(cookie)
         row = (
             await session.execute(
                 select(AuditLogEntry).where(AuditLogEntry.action == "invite.accepted")

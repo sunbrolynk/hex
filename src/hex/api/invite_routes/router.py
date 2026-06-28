@@ -37,13 +37,14 @@ from hex.database import (
 )
 from hex.database.models import AuditAction, AuditResult, AuditSeverity
 from hex.secrets.errors import InvalidToken
-from hex.setup import AttemptLimiter
+from hex.setup import AttemptLimiter, hash_token, mint_token
 
 log = logging.getLogger("hex.invite")
 router = APIRouter(tags=["invites"])
 
-# httponly cookie carrying the accepted HEx invite token through the Authentik enrollment trip.
-# Slice 6-2c reads it at the OIDC callback to set accepted_by + provision. Read by auth_routes.
+# httponly cookie carrying a server-minted nonce (matched to invites.accept_nonce_hash) through the
+# Authentik enrollment trip. Slice 6-2c reads it at the OIDC callback to find the invite, set
+# accepted_by + provision. Read by auth_routes. NOT the raw invite token (which is already burned).
 INVITE_COOKIE = "hex_invite"  # noqa: S105 — cookie name, not a credential
 
 _OWNER_ONLY = (Depends(forbid_until_setup_complete),)
@@ -231,6 +232,12 @@ async def accept_invite(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enrollment unavailable"
         ) from None
 
+    # A fresh server-minted nonce (NOT the burned invite token) is the enrollment-trip linkage:
+    # its hash persists on the invite, the raw nonce rides the httponly cookie, 6-2c matches them.
+    # Generated server-side so a guessed/forged cookie can't hijack provisioning.
+    nonce = mint_token()
+    invite.accept_nonce_hash = hash_token(nonce)
+
     # If the commit below fails the burn rolls back (invite reusable), but the Authentik invitation
     # just minted is orphaned. It's single-use + short-TTL, so it self-expires unused — a benign,
     # bounded artifact, and the HEx hard-cap-of-1 still holds.
@@ -251,7 +258,7 @@ async def accept_invite(
 
     response.set_cookie(
         INVITE_COOKIE,
-        token,
+        nonce,
         max_age=settings.enrollment_invitation_ttl_seconds,
         httponly=True,
         secure=settings.session_cookie_secure,
