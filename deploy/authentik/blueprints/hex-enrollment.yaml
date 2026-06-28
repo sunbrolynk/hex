@@ -96,7 +96,12 @@ entries:
       name: HEx Enrollment
       title: Create your HEx account
       designation: enrollment
-      authentication: require_unauthenticated
+      # `none`, not require_unauthenticated: an invitee may open the link in a browser already signed
+      # in to the homelab (shared device). require_unauthenticated hard-denies them with a bare
+      # "permission denied" page (FlowNonApplicableException); `none` lets enrollment proceed — the
+      # single-use invitation is the real gate, not auth state — and user-write + user-login then
+      # switch the session to the newly-created user.
+      authentication: none
 
   # ── Flow-stage bindings (invitation → prompt → write → login) ───────────────
   - model: authentik_flows.flowstagebinding

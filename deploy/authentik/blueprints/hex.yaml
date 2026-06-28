@@ -35,8 +35,11 @@ entries:
         - authentik_core.remove_user_from_group
         - authentik_core.view_group
         # Mint invitations for the HEx enrollment flow (Slice 6-2; hex-enrollment.yaml).
+        # view_flow is required to resolve the enrollment flow's pk to bind the invitation to it —
+        # without it the runtime flow lookup 403s and acceptance fails (caught in the live demo).
         - authentik_stages_invitation.add_invitation
         - authentik_stages_invitation.view_invitation
+        - authentik_flows.view_flow
 
   # ── Group carrying the role; the SA is a member. is_superuser explicitly false ──
   - model: authentik_core.group
