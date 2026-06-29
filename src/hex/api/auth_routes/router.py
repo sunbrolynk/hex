@@ -5,7 +5,7 @@ The browser only ever holds the opaque session cookie — no OIDC/access/ID toke
 """
 
 import logging
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
@@ -17,6 +17,7 @@ from hex.api.schemas import UserResponse
 from hex.database import (
     AuditLogManager,
     InviteManager,
+    LedgerManager,
     LoginStateManager,
     SessionManager,
     User,
@@ -25,6 +26,8 @@ from hex.database import (
 )
 from hex.database.models import AuditAction, AuditResult, AuditSeverity
 from hex.oidc import OIDCClient, OIDCError, make_nonce, make_pkce_pair, make_state
+from hex.providers import ProviderUser
+from hex.providers.engine import ProvisionEngine
 
 log = logging.getLogger("hex.auth")
 router = APIRouter(tags=["auth"])
@@ -44,6 +47,38 @@ def _safe_redirect(path: str | None) -> str:
 
 def _callback_url(request: Request) -> str:
     return str(request.url_for("auth_callback"))
+
+
+async def _provision_linked(request: Request, user: ProviderUser, grants: dict[str, Any]) -> None:
+    """Apply a freshly-linked invite's default grants in its own fail-isolated transaction.
+
+    Never raises into the login path: a provisioning fault is logged + rolled back, and the per-
+    provider outcomes are already in the append-only ledger. One ``provisioning.applied`` audit
+    event summarizes the run (#7).
+    """
+    app = request.app
+    # The ENTIRE body — including opening the session — is guarded: a fault acquiring or closing
+    # the connection (pool exhaustion, DB restart) in the window right after the login commits must
+    # not propagate into the already-committed login path (#2). Nothing here may raise outward.
+    try:
+        async with app.state.sessionmaker() as session:
+            engine = ProvisionEngine(app.state.registry, LedgerManager(session))
+            try:
+                summary = await engine.provision_grants(user, grants)
+                await AuditLogManager(session, app.state.audit_signer).append(
+                    action=AuditAction.PROVISIONING_APPLIED,
+                    severity=AuditSeverity.NOTICE,
+                    result=AuditResult.SUCCESS if summary.failed == 0 else AuditResult.FAILURE,
+                    actor=f"user:{user.id}",
+                    target=f"user:{user.id}",
+                    meta={"summary": summary.describe()},
+                )
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+    except Exception:
+        log.exception("provisioning failed for user %s", user.id)
 
 
 @router.get("/auth/login")
@@ -140,6 +175,10 @@ async def auth_callback(
     linked_invite = (
         await InviteManager(session).link_to_user(invite_nonce, user.id) if invite_nonce else None
     )
+    # Capture for post-commit provisioning before the login txn closes (avoids detached-instance
+    # access). default_grants is the provider_id → grant map applied once, on first link.
+    pending_grants = dict(linked_invite.default_grants) if linked_invite else None
+    provider_user = ProviderUser(id=user.id, username=user.username, email=user.email)
     raw = await SessionManager(session, lifetime_seconds=settings.session_lifetime_seconds).create(
         user
     )
@@ -165,6 +204,11 @@ async def auth_callback(
     except Exception:
         await session.rollback()
         return await fail("persist_failed")
+
+    # Login is committed. Provision the just-linked invite's grants in a SEPARATE, fail-isolated
+    # transaction — a provider/provisioning failure must never undo the login (6-3).
+    if pending_grants:
+        await _provision_linked(request, provider_user, pending_grants)
 
     response = RedirectResponse(_safe_redirect(flow.redirect_to), status_code=status.HTTP_302_FOUND)
     response.set_cookie(

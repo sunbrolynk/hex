@@ -2,31 +2,38 @@
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from typing import cast
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
 import pytest_asyncio
 import respx
+from fastapi import Request
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from hex.api.auth_routes.router import _safe_redirect
+from hex.api.auth_routes.router import _provision_linked, _safe_redirect
 from hex.api.main import create_app
 from hex.config import Settings
 from hex.database import (
     AuditLogManager,
     AuthentikIntegrationManager,
     Invite,
+    LedgerManager,
     LoginStateManager,
     User,
     UserSession,
 )
-from hex.database.models import AuditLogEntry, OIDCLoginState
+from hex.database.models import AuditLogEntry, AuditResult, OIDCLoginState, ProvisioningEvent
+from hex.providers import ProviderUser, ProvisionState
+from hex.providers.engine import ProvisionEngine
 from hex.setup import hash_token
 from tests.conftest import make_settings
 from tests.oidc import _oidc
+from tests.providers.reference import ReferenceLocalProvider
 
 
 async def _seed_accepted_invite(
@@ -34,6 +41,7 @@ async def _seed_accepted_invite(
     *,
     nonce: str,
     accepted_by: int | None = None,
+    grants: dict[str, object] | None = None,
 ) -> None:
     """An invite already burned in 6-2b, awaiting the 6-2c link via its acceptance nonce."""
     async with sessionmaker() as session:
@@ -44,7 +52,7 @@ async def _seed_accepted_invite(
             Invite(
                 token_hash=hash_token(f"tok-{nonce}"),
                 created_by=owner.id,
-                default_grants={},
+                default_grants=grants or {},
                 requestable=[],
                 expires_at=datetime.now(UTC) + timedelta(hours=1),
                 accepted_at=datetime.now(UTC),
@@ -271,6 +279,13 @@ async def test_callback_links_invite_via_nonce_cookie(
     assert "invite.linked" in await _audit_actions(sessionmaker)  # privileged action audited (#7)
     cleared = [c for c in resp.headers.get_list("set-cookie") if c.startswith("hex_invite=")]
     assert cleared and "Max-Age=0" in cleared[0]
+    # This invite has no default_grants → provisioning is skipped (no audit event, no ledger rows).
+    assert "provisioning.applied" not in await _audit_actions(sessionmaker)
+    async with sessionmaker() as session:
+        ledger_rows = (
+            await session.execute(select(func.count()).select_from(ProvisioningEvent))
+        ).scalar_one()
+    assert ledger_rows == 0
 
 
 @respx.mock
@@ -346,6 +361,134 @@ async def test_callback_does_not_rebind_an_already_linked_invite(
     )
     assert resp.status_code == 302
     assert await _linked_invite_owner(sessionmaker) == 999  # first-wins, not rebound
+
+
+async def _run_callback_with_provider(
+    engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    *,
+    provider: ReferenceLocalProvider | None,
+    grants: dict[str, object],
+    nonce: str = "prov-nonce",
+) -> tuple[int, list[str]]:
+    """Run the callback for a linked invite carrying grants; return (new user id, audit actions)."""
+    app = create_app(_settings(env="dev"))
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    if provider is not None:
+        app.state.registry.register(provider)
+    await _seed_state(sessionmaker, state="good")
+    await _seed_accepted_invite(sessionmaker, nonce=nonce, grants=grants)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        ac.cookies.set("hex_invite", nonce)
+        resp = await ac.get(
+            "/auth/callback", params={"code": "c", "state": "good"}, follow_redirects=False
+        )
+    assert resp.status_code == 302  # login always succeeds
+    async with sessionmaker() as session:
+        new_user = (
+            await session.execute(select(User).where(User.is_owner.is_(False)))
+        ).scalar_one()
+    return new_user.id, await _audit_actions(sessionmaker)
+
+
+@respx.mock
+async def test_callback_provisions_linked_invite_grants(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    _mock_oidc()
+    uid, actions = await _run_callback_with_provider(
+        engine,
+        sessionmaker,
+        provider=ReferenceLocalProvider(healthy=True),
+        grants={"ref-local": {"tier": "premium"}},
+    )
+    assert "provisioning.applied" in actions
+    async with sessionmaker() as session:
+        entry = await LedgerManager(session).current_entry(uid, "ref-local")
+        applied = (
+            await session.execute(
+                select(AuditLogEntry).where(AuditLogEntry.action == "provisioning.applied")
+            )
+        ).scalar_one()
+    assert entry is not None and entry.state == ProvisionState.GRANTED
+    # A clean run is audited SUCCESS, and the #7 summary carries the roll-up counts.
+    assert applied.result == AuditResult.SUCCESS
+    assert applied.meta["summary"] == "granted=1 pending=0 partial=0 failed=0"
+
+
+@respx.mock
+async def test_callback_provisioning_failure_does_not_block_login(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    # Empty registry → unknown provider → FAILED ledger event, but the login still succeeds (302)
+    # and the failure is recorded, never raised into the login path.
+    _mock_oidc()
+    uid, actions = await _run_callback_with_provider(
+        engine,
+        sessionmaker,
+        provider=None,
+        grants={"ref-local": {"tier": "x"}},
+    )
+    assert "provisioning.applied" in actions
+    async with sessionmaker() as session:
+        entry = await LedgerManager(session).current_entry(uid, "ref-local")
+        applied = (
+            await session.execute(
+                select(AuditLogEntry).where(AuditLogEntry.action == "provisioning.applied")
+            )
+        ).scalar_one()
+    assert entry is not None and entry.state == ProvisionState.FAILED
+    # A run with any failure is audited FAILURE, with the failed count in the summary.
+    assert applied.result == AuditResult.FAILURE
+    assert applied.meta["summary"] == "granted=0 pending=0 partial=0 failed=1"
+
+
+@respx.mock
+async def test_callback_provisioning_exception_is_isolated_from_login(
+    engine: AsyncEngine,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A provisioning subsystem fault must never break the (already-committed) login — AND any work
+    # already flushed in the provisioning txn must be rolled back, leaking nothing into the ledger.
+    _mock_oidc()
+
+    async def flush_then_boom(self: ProvisionEngine, user: ProviderUser, grants: object) -> object:
+        # Flush a GRANTED ledger row, THEN fail — proving the rollback discards committed-in-flight
+        # work (the prior test raised before any flush, so it could not prove this).
+        await self._ledger.record_event(
+            user_id=user.id, provider_id="ref-local", state=ProvisionState.GRANTED, grant={}
+        )
+        raise RuntimeError("engine down after flush")
+
+    monkeypatch.setattr(ProvisionEngine, "provision_grants", flush_then_boom)
+    uid, actions = await _run_callback_with_provider(
+        engine,
+        sessionmaker,
+        provider=ReferenceLocalProvider(healthy=True),
+        grants={"ref-local": {"tier": "x"}},
+    )
+    assert "oidc.login.succeeded" in actions  # login still committed
+    assert "provisioning.applied" not in actions  # provisioning txn rolled back
+    async with sessionmaker() as session:
+        # The flushed GRANTED row is gone — the failed provisioning txn left no trace.
+        assert await LedgerManager(session).current_entry(uid, "ref-local") is None
+
+
+async def test_provision_linked_swallows_session_acquisition_failure() -> None:
+    # The session is opened INSIDE the guard: a fault acquiring the connection (pool exhaustion,
+    # DB restart) right after the login commit must not propagate into the login path (#2).
+    app = create_app(_settings(env="dev"))
+
+    def boom() -> AsyncSession:
+        raise RuntimeError("pool exhausted")
+
+    app.state.sessionmaker = boom
+    request = cast(Request, SimpleNamespace(app=app))
+    # Must return normally (no raise) despite the session never opening.
+    await _provision_linked(request, ProviderUser(1, "u", "u@e.test"), {"ref-local": {}})
 
 
 @respx.mock

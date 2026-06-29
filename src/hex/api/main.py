@@ -26,6 +26,7 @@ from hex.database import AuditLogManager, SetupStateManager, build_engine, build
 from hex.database.migrate import assert_at_head, upgrade_to_head
 from hex.database.models import AuditAction, AuditResult, AuditSeverity
 from hex.oidc import DiscoveryCache
+from hex.providers import ProviderRegistry
 from hex.secrets import broker_from_settings, validate_secrets
 from hex.setup import AttemptLimiter, LockoutCounter
 
@@ -73,6 +74,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.http = httpx.AsyncClient(timeout=10.0)
     # Shared discovery/JWKS cache; the OIDC client is built per request from resolved config.
     app.state.discovery_cache = DiscoveryCache(app.state.http)
+    # Provider registry the provision engine resolves grants against. Empty until real providers
+    # land (Phase 4): until then, provisioning records FAILED/unknown-provider (fail-secure).
+    app.state.registry = ProviderRegistry()
     app.include_router(system_router)
     app.include_router(auth_router)
     app.include_router(breakglass_router)
