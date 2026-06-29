@@ -99,6 +99,31 @@ class LedgerManager:
             .all()
         )
 
+    async def user_active_entries(self, user_id: int) -> list[LedgerEntry]:
+        """One user's grants still in an active state — the dashboard's only ledger read.
+
+        Scoped to ``user_id`` in SQL (not filtered in Python) so the per-user boundary is enforced
+        at the query: a dashboard can never surface another user's tiles (non-negotiable #8).
+        """
+        latest_ids = (
+            select(func.max(ProvisioningEvent.id))
+            .where(ProvisioningEvent.user_id == user_id)
+            .group_by(ProvisioningEvent.provider_id)
+            .scalar_subquery()
+        )
+        rows = (
+            (
+                await self._session.execute(
+                    select(ProvisioningEvent)
+                    .where(ProvisioningEvent.id.in_(latest_ids))
+                    .order_by(ProvisioningEvent.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [_to_entry(row) for row in rows if row.state in _ACTIVE_STATES]
+
     async def active_entries(self) -> list[LedgerEntry]:
         """Current state of every grant still in an active state — what reconciliation walks."""
         latest_ids = (

@@ -8,6 +8,24 @@ from pydantic import BaseModel, ConfigDict, Field
 from hex.database.models import SetupPhase
 
 
+class TileResponse(BaseModel):
+    """One dashboard tile — a service the user has been granted (read from the ledger)."""
+
+    provider_id: str
+    name: str
+    category: str
+    state: str  # ProvisionState value: granted / pending_* / partial
+    integration_mode: str
+    url: str | None  # owner-configured deep-link; None when not configured
+    seamless: bool  # tile click drops straight in (SSO pass-through) where the mode allows
+
+
+class DashboardResponse(BaseModel):
+    """The signed-in user's personalized dashboard — strictly their own grants."""
+
+    tiles: list[TileResponse]
+
+
 class HealthResponse(BaseModel):
     """Liveness payload for ``GET /health``."""
 

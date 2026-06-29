@@ -16,6 +16,7 @@ from starlette.types import Scope
 from hex.__version__ import __version__
 from hex.api.auth_routes import router as auth_router
 from hex.api.breakglass_routes import router as breakglass_router
+from hex.api.dashboard_routes import router as dashboard_router
 from hex.api.invite_routes import router as invite_router
 from hex.api.system_routes import router as system_router
 from hex.audit import AuditSigner
@@ -27,6 +28,7 @@ from hex.database.migrate import assert_at_head, upgrade_to_head
 from hex.database.models import AuditAction, AuditResult, AuditSeverity
 from hex.oidc import DiscoveryCache
 from hex.providers import ProviderRegistry
+from hex.providers.demo import register_demo_providers
 from hex.secrets import broker_from_settings, validate_secrets
 from hex.setup import AttemptLimiter, LockoutCounter
 
@@ -75,12 +77,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Shared discovery/JWKS cache; the OIDC client is built per request from resolved config.
     app.state.discovery_cache = DiscoveryCache(app.state.http)
     # Provider registry the provision engine resolves grants against. Empty until real providers
-    # land (Phase 4): until then, provisioning records FAILED/unknown-provider (fail-secure).
+    # land (Phase 4); the demo providers populate it in dev only (refuses in production).
     app.state.registry = ProviderRegistry()
+    register_demo_providers(app.state.registry, settings)
     app.include_router(system_router)
     app.include_router(auth_router)
     app.include_router(breakglass_router)
     app.include_router(invite_router)
+    app.include_router(dashboard_router)
     _mount_spa(app, settings)
     return app
 

@@ -23,6 +23,9 @@ function mockApi(opts: { setup: SetupBody; me?: MeBody }) {
         }
         return { ok: true, status: 200, json: async () => opts.me } as unknown as Response
       }
+      if (url.includes('/dashboard')) {
+        return { ok: true, status: 200, json: async () => ({ tiles: [] }) } as unknown as Response
+      }
       return { ok: true, status: 200, json: async () => ({}) } as unknown as Response
     }),
   )
@@ -39,7 +42,9 @@ describe('App shell', () => {
   it('renders the home landing once setup is complete and the user is signed in', async () => {
     mockApi({ setup: { phase: 'complete', setup_required: false }, me: OWNER })
     render(<App />)
-    expect(await screen.findByRole('heading', { level: 1, name: 'HEx' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Your services' }),
+    ).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'About' })).toHaveAttribute('href', '/about')
     expect(screen.getByRole('button', { name: 'Log out' })).toBeInTheDocument()
   })
