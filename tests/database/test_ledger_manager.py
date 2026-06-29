@@ -77,6 +77,32 @@ async def test_active_entries_excludes_revoked_and_failed(db_session: AsyncSessi
     assert (user.id, "bad") not in pairs  # FAILED → not active
 
 
+async def test_user_active_entries_is_scoped_to_one_user(db_session: AsyncSession) -> None:
+    alice = await _user(db_session, "alice")
+    bob = await _user(db_session, "bob")
+    manager = LedgerManager(db_session)
+    await manager.record_event(user_id=alice.id, provider_id="media", state=ProvisionState.GRANTED)
+    await manager.record_event(user_id=bob.id, provider_id="reqs", state=ProvisionState.GRANTED)
+
+    alice_pairs = {(e.user_id, e.provider_id) for e in await manager.user_active_entries(alice.id)}
+    assert alice_pairs == {(alice.id, "media")}  # never bob's grant
+
+
+async def test_user_active_entries_latest_state_and_active_filter(db_session: AsyncSession) -> None:
+    user = await _user(db_session)
+    manager = LedgerManager(db_session)
+    await manager.record_event(user_id=user.id, provider_id="live", state=ProvisionState.GRANTED)
+    await manager.record_event(user_id=user.id, provider_id="gone", state=ProvisionState.GRANTED)
+    await manager.record_event(user_id=user.id, provider_id="gone", state=ProvisionState.REVOKED)
+
+    providers = {e.provider_id for e in await manager.user_active_entries(user.id)}
+    assert providers == {"live"}  # latest REVOKED drops out; only active states remain
+
+
+async def test_user_active_entries_empty_for_unknown_user(db_session: AsyncSession) -> None:
+    assert await LedgerManager(db_session).user_active_entries(404) == []
+
+
 async def test_partial_record_is_persisted(db_session: AsyncSession) -> None:
     user = await _user(db_session)
     event = await LedgerManager(db_session).record_event(

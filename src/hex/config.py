@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # Built frontend path for single-origin serving; unset in dev/test.
     static_dir: str | None = None
 
+    # Register the in-app demo providers so the lifecycle arc (provision → ledger → dashboard) is
+    # exercisable before real providers land (Phase 4). Hard prod-off: create_app refuses to boot
+    # if this is set while env=="production" (never a live access surface).
+    dev_providers: bool = False
+
     # Database connection (non-secret parts; the password is a required secret below).
     db_host: str = "localhost"
     db_port: int = 5432
