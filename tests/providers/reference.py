@@ -15,6 +15,7 @@ from hex.providers.types import (
     DeprovisionResult,
     DownstreamStatus,
     Grant,
+    GrantTemplate,
     IdentityOwner,
     IntegrationMode,
     LedgerEntry,
@@ -37,7 +38,7 @@ class ReferenceLocalProvider(Provider):
     category = "test"
     integration_mode = IntegrationMode.API_LOCAL
     identity_owner = IdentityOwner.PROVIDER
-    capabilities = frozenset({Capability.WIDGET_DATA})
+    capabilities = frozenset({Capability.WIDGET_DATA, Capability.AVAILABLE_GRANTS})
     grant_model = ReferenceGrant
 
     def __init__(self, *, healthy: bool = True, valid_config: bool = True) -> None:
@@ -69,6 +70,14 @@ class ReferenceLocalProvider(Provider):
         if record is None:
             return None
         return WidgetPayload(data={"user_id": user.id, "ref": record["ref"]})  # this user only
+
+    def available_grants(self) -> list[GrantTemplate]:
+        return [
+            GrantTemplate(key="standard", label="Standard", grant={"tier": "standard"}),
+            GrantTemplate(
+                key="premium", label="Premium", grant={"tier": "premium"}, description="Full access"
+            ),
+        ]
 
 
 class ReferenceExternalProvider(Provider):

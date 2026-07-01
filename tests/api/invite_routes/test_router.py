@@ -20,6 +20,7 @@ from hex.database.models import AuditLogEntry, SetupPhase, SetupState
 from hex.secrets.errors import InvalidToken
 from hex.setup import hash_token
 from tests.conftest import make_settings
+from tests.providers.reference import ReferenceLocalProvider
 
 _AK = "http://ak.test"
 # import_module returns the real submodule (plain `import …router` binds the re-exported APIRouter).
@@ -55,6 +56,9 @@ async def client(
     app = create_app(make_settings(env="dev"))  # dev → non-Secure cookie round-trips over http://
     app.state.engine = engine
     app.state.sessionmaker = sessionmaker
+    app.state.registry.register(
+        ReferenceLocalProvider()
+    )  # a known provider (tiers standard/premium)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
@@ -97,7 +101,7 @@ async def test_owner_creates_invite_returns_token_once_and_audits(
     client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
 ) -> None:
     await _auth(client, sessionmaker)
-    resp = await client.post("/invites", json={"requestable": ["jellyfin"], "ttl_hours": 24})
+    resp = await client.post("/invites", json={"requestable": ["ref-local"], "ttl_hours": 24})
     assert resp.status_code == 201
     body = resp.json()
     assert body["token"] and "expires_at" in body
@@ -106,6 +110,67 @@ async def test_owner_creates_invite_returns_token_once_and_audits(
         invite = (await session.execute(select(Invite))).scalar_one()
         assert invite.token_hash == hash_token(body["token"])
     assert "invite.created" in await _audit_actions(sessionmaker)
+
+
+async def test_create_invite_resolves_tier_key_to_structured_grant(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    # The owner sends a tier KEY; the server resolves it to the provider's structured grant and
+    # stores THAT (no owner-authored grant blob) — 6-3 provisioning reads the structured shape.
+    await _auth(client, sessionmaker)
+    resp = await client.post("/invites", json={"default_grants": {"ref-local": "premium"}})
+    assert resp.status_code == 201
+    async with sessionmaker() as session:
+        invite = (await session.execute(select(Invite))).scalar_one()
+    assert invite.default_grants == {"ref-local": {"tier": "premium"}}
+
+
+async def _assert_nothing_stored(sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+    async with sessionmaker() as session:  # a rejected create must persist NO invite (fail-secure)
+        assert (await session.execute(select(Invite))).first() is None
+
+
+async def test_create_invite_rejects_unknown_provider(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    await _auth(client, sessionmaker)
+    resp = await client.post("/invites", json={"default_grants": {"ghost-svc": "standard"}})
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "unknown provider or tier"  # uniform, non-enumerating
+    await _assert_nothing_stored(sessionmaker)
+
+
+async def test_create_invite_rejects_unknown_tier(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    await _auth(client, sessionmaker)
+    resp = await client.post("/invites", json={"default_grants": {"ref-local": "no-such-tier"}})
+    assert resp.status_code == 422
+    # Same detail as unknown-provider — the owner can't distinguish which was wrong.
+    assert resp.json()["detail"] == "unknown provider or tier"
+    await _assert_nothing_stored(sessionmaker)
+
+
+async def test_create_invite_rejects_unknown_requestable(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    await _auth(client, sessionmaker)
+    resp = await client.post("/invites", json={"requestable": ["ref-local", "ghost-svc"]})
+    assert resp.status_code == 422
+    await _assert_nothing_stored(sessionmaker)
+
+
+async def test_create_invite_rejects_a_smuggled_raw_grant(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    # The owner may only pick a tier KEY (a string); a raw grant object must not cross the wire and
+    # must be rejected (422) with nothing stored — the server owns the structured grant (ADR 0015).
+    await _auth(client, sessionmaker)
+    resp = await client.post(
+        "/invites", json={"default_grants": {"ref-local": {"tier": "premium"}}}
+    )
+    assert resp.status_code == 422
+    await _assert_nothing_stored(sessionmaker)
 
 
 async def test_invite_created_audit_row_is_complete(
@@ -198,14 +263,14 @@ async def test_preview_valid_invite(
     token = (
         await client.post(
             "/invites",
-            json={"requestable": ["plex"], "default_grants": {"jellyfin": {"libraries": ["m"]}}},
+            json={"requestable": ["ref-local"], "default_grants": {"ref-local": "standard"}},
         )
     ).json()["token"]
     preview = await client.get(f"/invite/{token}/preview")
     assert preview.status_code == 200
     body = preview.json()
-    assert body["requestable"] == ["plex"]
-    assert body["grant_providers"] == ["jellyfin"]
+    assert body["requestable"] == ["ref-local"]
+    assert body["grant_providers"] == ["ref-local"]
 
 
 async def test_preview_unknown_token_is_uniform_404(client: AsyncClient) -> None:

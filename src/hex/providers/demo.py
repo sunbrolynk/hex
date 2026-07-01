@@ -12,10 +12,12 @@ from hex.config import Settings
 from hex.providers.base import Provider
 from hex.providers.registry import ProviderRegistry
 from hex.providers.types import (
+    Capability,
     ConfigStatus,
     DeprovisionResult,
     DownstreamStatus,
     Grant,
+    GrantTemplate,
     IdentityOwner,
     IntegrationMode,
     LedgerEntry,
@@ -36,7 +38,16 @@ class _DemoProvider(Provider):
 
     identity_owner: ClassVar[IdentityOwner] = IdentityOwner.AUTHENTIK
     grant_model: ClassVar[type[Grant]] = DemoGrant
+    capabilities: ClassVar[frozenset[Capability]] = frozenset({Capability.AVAILABLE_GRANTS})
     link: ClassVar[str]  # where the tile deep-links (real providers will source this from config)
+    # Tiers the owner can offer (key, label). The owner picks a key at invite time; HEx resolves it
+    # to the structured grant — no owner-authored grant blobs (ADR 0015).
+    tiers: ClassVar[tuple[tuple[str, str], ...]] = (("standard", "Standard"),)
+
+    def available_grants(self) -> list[GrantTemplate]:
+        return [
+            GrantTemplate(key=key, label=label, grant={"tier": key}) for key, label in self.tiers
+        ]
 
     async def validate_config(self) -> ConfigStatus:
         return ConfigStatus(ok=True)
@@ -57,6 +68,7 @@ class DemoMediaProvider(_DemoProvider):
     category = "media"
     integration_mode = IntegrationMode.SSO_GROUP
     link = "https://media.demo.hex.local"
+    tiers = (("standard", "Standard"), ("premium", "Premium"))
 
 
 class DemoRequestsProvider(_DemoProvider):
