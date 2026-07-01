@@ -1,7 +1,7 @@
 # 0015 — Access model: categories, tiers, per-service overrides, and three-tier visibility
 
-- Status: **Proposed** (draft for maintainer acceptance; design-first, no feature code until frozen)
-- Date: 2026-06-30
+- Status: **Accepted** (design-first; the two acceptance questions below are resolved inline)
+- Date: 2026-06-30 (accepted 2026-07-01)
 - Relates to: ADR 0002 (provider contract / four modes), 0001 (Authentik as SoT), 0014 (rich
   dashboard). Enables the invite-grant selection, dashboard visibility, and the request-more flow —
   which all share this one model.
@@ -32,13 +32,23 @@ Four **orthogonal** concepts (do not conflate them):
 Owner-curated labels grouping services (media, gaming, docs, home & family, music, photos, tv,
 movies, productivity, …): a pick-from-suggested **plus create-your-own** list; a service can belong
 to several. Purely for **organizing/displaying** and for **bulk selection**. Provider-agnostic; carry
-no permission by themselves.
+no permission by themselves. **Resolved (Q2): HEx ships a default suggested category set** (Media,
+Gaming, Docs, Home & Family, Music, Photos, Productivity, …) that is **fully owner-editable**
+(rename / add / remove) — owners start organized, not on a blank slate.
 
 ### 2. Tiers — permission bundles
 Owner-defined named bundles (e.g. "Family", "Guest") that map a set of services → **each service's
 grant**, expressed in that service's own terms. A user is assigned a tier (per invite). A tier may be
 composed **from a category**, from an **independent tier-grouping seeded by the owner's Authentik
-groups**, or **per-service**. A "level" is not universal — it **resolves per `integration_mode`**:
+groups**, or **per-service**.
+
+**Resolved (Q1): a tier is a HEx bundle that *expands*, not a single Authentik group.** It expands to
+per-service grants — for `sso_group` that means membership in the relevant service/level groups, for
+`api_local`/`external_invite` the app-appropriate grant. So one tier can span many services and modes
+(which a single Authentik group cannot). Owners may still *seed* a tier's SSO memberships from
+existing Authentik groups, but the tier itself is a HEx concept layered over Authentik.
+
+A "level" is not universal — it **resolves per `integration_mode`**:
 
 | Mode | What a "level/grant" is |
 |---|---|
@@ -129,12 +139,11 @@ By construction, not by hope:
   providers are built.
 - **Config-driven provider templates** ("adding a service is mostly config") — its own future ADR
   (see `[[provider-catalog-and-roadmap]]`).
-- Concrete storage (HEx tables for categories/tiers/overrides/visibility) — an implementation slice
-  once this model is accepted.
+- Concrete storage (HEx tables for categories/tiers/overrides/visibility) — the first implementation
+  slice now that this model is accepted.
 
-## Open questions for acceptance
-1. **Tier ↔ Authentik group** — does a HEx "tier" map 1:1 to an Authentik group the owner already
-   has (seed + reuse), or is a tier a HEx bundle that *expands* to several per-service group
-   memberships? (Leaning: a HEx bundle that expands, so one tier can span many services/modes.)
-2. **Category source** — ship a default suggested category list (media/gaming/…) editable by the
-   owner, or start empty with create-your-own only?
+## Resolved acceptance decisions (2026-07-01)
+1. **Tier ↔ Authentik group** — a tier is a **HEx bundle that expands** to per-service grants (SSO
+   memberships included), not a single Authentik group; one tier spans many services/modes. Owners
+   may seed a tier's SSO memberships from existing Authentik groups.
+2. **Category source** — HEx ships a **default suggested category list**, fully owner-editable.
