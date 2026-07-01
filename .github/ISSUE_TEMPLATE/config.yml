@@ -1,0 +1,6 @@
+# Steer open-ended questions to Discussions; keep issues actionable.
+blank_issues_enabled: true
+contact_links:
+  - name: 💬 Discussions — service ideas & "is X planned?"
+    url: https://github.com/sunbrolynk/hex/discussions
+    about: Ask whether a service is planned, discuss integration approaches, or float an idea before filing.
