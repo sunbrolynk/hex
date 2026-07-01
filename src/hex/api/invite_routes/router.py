@@ -9,7 +9,7 @@ same 404. Acceptance (signup + provision) lands in Slices 6-2/6-3.
 import logging
 import time
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.exc import SQLAlchemyError
@@ -36,6 +36,7 @@ from hex.database import (
     get_session,
 )
 from hex.database.models import AuditAction, AuditResult, AuditSeverity
+from hex.providers import ProviderRegistry
 from hex.secrets.errors import InvalidToken
 from hex.setup import AttemptLimiter, hash_token, mint_token
 
@@ -48,6 +49,42 @@ router = APIRouter(tags=["invites"])
 INVITE_COOKIE = "hex_invite"  # noqa: S105 — cookie name, not a credential
 
 _OWNER_ONLY = (Depends(forbid_until_setup_complete),)
+
+
+def _reject_unknown() -> HTTPException:
+    # Uniform, non-leaky: don't distinguish unknown-provider from unknown-tier.
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="unknown provider or tier"
+    )
+
+
+def _resolve_grants(registry: ProviderRegistry, default_grants: dict[str, str]) -> dict[str, Any]:
+    """Resolve owner-picked ``{provider_id: tier_key}`` to ``{provider_id: structured grant}``.
+
+    Every provider id AND tier key is validated against the registry; the server holds the grant a
+    key resolves to, so no owner-authored grant blob is trusted. Any miss → 422 (ADR 0015).
+    """
+    resolved: dict[str, Any] = {}
+    for provider_id, tier_key in default_grants.items():
+        provider = registry.get(provider_id)
+        template = (
+            next((t for t in provider.available_grants() if t.key == tier_key), None)
+            if provider is not None
+            else None
+        )
+        if provider is None or template is None:
+            raise _reject_unknown()
+        # Re-validate the provider-authored tier through its grant model, so the stored grant is
+        # guaranteed to satisfy the structured-grant contract 6-3 provisioning reads back.
+        resolved[provider_id] = provider.parse_grant(template.grant).model_dump()
+    return resolved
+
+
+def _validate_requestable(registry: ProviderRegistry, requestable: list[str]) -> None:
+    """Every requestable provider id must exist in the registry (no phantom/unknown services)."""
+    for provider_id in requestable:
+        if registry.get(provider_id) is None:
+            raise _reject_unknown()
 
 
 def _aware(value: datetime) -> datetime:
@@ -84,12 +121,20 @@ async def create_invite(
     owner: Annotated[User, Depends(require_owner)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> InviteCreatedResponse:
-    """Create an invite; the raw token is returned exactly once. Audited as a privileged action."""
+    """Create an invite; the raw token is returned exactly once. Audited as a privileged action.
+
+    Grants + requestable are validated against the provider registry BEFORE anything is stored: the
+    owner-picked tier keys resolve to structured grants, and unknown providers/tiers are rejected
+    (422) — an invite can never carry a grant for a service/tier that doesn't exist (ADR 0015).
+    """
+    registry: ProviderRegistry = request.app.state.registry
+    resolved_grants = _resolve_grants(registry, body.default_grants)
+    _validate_requestable(registry, body.requestable)
     manager = InviteManager(session)
     try:
         invite, raw = await manager.create(
             owner_id=owner.id,
-            default_grants=body.default_grants,
+            default_grants=resolved_grants,
             requestable=body.requestable,
             ttl_seconds=body.ttl_hours * 3600,
         )

@@ -1,7 +1,6 @@
 """Central API schemas."""
 
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -73,12 +72,36 @@ class BreakGlassLoginRequest(BaseModel):
     totp: str = Field(min_length=1, max_length=16)
 
 
+class TierOption(BaseModel):
+    """A grantable tier a provider offers. The owner picks the ``key``; the server resolves it to
+    the structured grant — no owner-authored grant blobs cross the wire (ADR 0015)."""
+
+    key: str
+    label: str
+    description: str | None = None
+
+
+class ProviderSummary(BaseModel):
+    """An integrated service the owner can grant/offer, for ``GET /providers`` (owner-only)."""
+
+    id: str
+    name: str
+    category: str
+    integration_mode: str
+    tiers: list[TierOption]
+
+
 class InviteCreateRequest(BaseModel):
-    """Body for ``POST /invites`` (owner-only). Default grants + requestable allowlist + TTL."""
+    """Body for ``POST /invites`` (owner-only). Grants + requestable allowlist + TTL.
+
+    ``default_grants`` maps ``provider_id → tier key`` (both validated against the registry
+    server-side; the server resolves the key to the structured grant). ``requestable`` is a list of
+    provider ids the user may later request — also registry-validated.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    default_grants: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    default_grants: dict[str, str] = Field(default_factory=dict)  # provider_id -> tier key
     requestable: list[str] = Field(default_factory=list)
     ttl_hours: int = Field(default=168, ge=1, le=8760)  # 1h … 1y; default 7 days
 

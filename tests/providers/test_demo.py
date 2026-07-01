@@ -28,6 +28,13 @@ async def test_demo_provider_always_grants_and_is_present() -> None:
     assert (await provider.deprovision(_USER, _ENTRY)).revoked
 
 
+def test_demo_media_offers_tiers() -> None:
+    tiers = DemoMediaProvider().available_grants()
+    assert {t.key for t in tiers} == {"standard", "premium"}
+    # A tier resolves to the provider's structured grant (what the invite stores).
+    assert next(t for t in tiers if t.key == "premium").grant == {"tier": "premium"}
+
+
 def test_register_demo_providers_off_by_default() -> None:
     registry = ProviderRegistry()
     register_demo_providers(registry, make_settings())
