@@ -27,6 +27,7 @@ export async function listInvites(): Promise<Invite[]> {
 export async function createInvite(input: {
   ttl_hours: number
   requestable: string[]
+  default_grants?: Record<string, string> // provider_id -> tier key (server resolves to the grant)
 }): Promise<CreatedInvite> {
   const res = await fetch('/invites', {
     method: 'POST',
