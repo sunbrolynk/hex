@@ -491,3 +491,31 @@ async def test_preview_is_rate_limited(
     for _ in range(10):
         assert (await client.get("/invite/bad/preview")).status_code == 404
     assert (await client.get("/invite/bad/preview")).status_code == 429
+
+
+async def test_link_to_user_binds_first_wins_by_nonce(
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    # The shared bind for both 6-2d signals (signed claim + cookie): matched by the acceptance nonce
+    # (only set on an accepted invite), first-wins so a replay can't re-bind.
+    async with sessionmaker() as session:
+        owner = User(authentik_sub="o", username="o", is_owner=True)
+        session.add(owner)
+        await session.flush()
+        invite = Invite(
+            token_hash=hash_token("a"),
+            created_by=owner.id,
+            default_grants={},
+            requestable=[],
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            accepted_at=datetime.now(UTC),
+            accept_nonce_hash=hash_token("the-nonce"),
+        )
+        session.add(invite)
+        await session.flush()
+        manager = InviteManager(session)
+
+        bound = await manager.link_to_user("the-nonce", 7)
+        assert bound is not None and bound.accepted_by == 7
+        assert await manager.link_to_user("the-nonce", 8) is None  # first-wins, no rebind
+        assert await manager.link_to_user("wrong-nonce", 7) is None  # no match

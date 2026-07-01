@@ -50,7 +50,9 @@ extra = {
     "HEX_AUTHENTIK_MODE": "bundled",
     "COMPOSE_PROFILES": "bundled-authentik",
     "HEX_DB_HOST": "hex-db",
-    "HEX_PUBLIC_BASE_URL": "http://localhost:8000",
+    # Browser-facing HEx URL (the published host port, not the internal :8000). Authentik reads it
+    # (via env_file) to build the post-enrollment redirect back to HEx; operators set their real URL.
+    "HEX_PUBLIC_BASE_URL": "http://localhost:52000",
     "AUTHENTIK_BASE_URL": "http://authentik-server:9000",
 }
 for k, v in extra.items():

@@ -218,12 +218,23 @@ async def accept_invite(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enrollment unavailable"
         )
 
+    # A fresh server-minted nonce (NOT the burned invite token) is the enrollment-trip linkage:
+    # ≥256-bit, hashed at rest on the invite (``accept_nonce_hash``). The SAME nonce travels two
+    # ways — the httponly cookie (fallback) and Authentik ``fixed_data.attributes`` → the new user's
+    # attribute → a SIGNED ID-token claim (primary, 6-2d). The OIDC callback matches either against
+    # ``accept_nonce_hash``. An unguessable nonce (never the sequential invite id) is what makes the
+    # bind a capability: a guessed/forged value can't hijack provisioning (SECURITY_MODEL §6).
+    nonce = mint_token()
+    invite.accept_nonce_hash = hash_token(nonce)
+
     client_api = AuthentikManagementClient(sa.api_base, sa.token, app.state.http)
     try:
         itoken = await client_api.create_invitation(
             name=f"hex-invite-{invite.id}",
             flow_slug=settings.enrollment_flow_slug,
-            fixed_data={"hex_invite_id": invite.id},
+            # Nest under ``attributes`` so the enrollment user-write stage PERSISTS the nonce on the
+            # new user (a flat key is discarded — 6-2d spike); it returns as a signed claim.
+            fixed_data={"attributes": {"hex_invite_nonce": nonce}},
             ttl_seconds=settings.enrollment_invitation_ttl_seconds,
         )
     except AuthentikError:
@@ -231,12 +242,6 @@ async def accept_invite(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enrollment unavailable"
         ) from None
-
-    # A fresh server-minted nonce (NOT the burned invite token) is the enrollment-trip linkage:
-    # its hash persists on the invite, the raw nonce rides the httponly cookie, 6-2c matches them.
-    # Generated server-side so a guessed/forged cookie can't hijack provisioning.
-    nonce = mint_token()
-    invite.accept_nonce_hash = hash_token(nonce)
 
     # If the commit below fails the burn rolls back (invite reusable), but the Authentik invitation
     # just minted is orphaned. It's single-use + short-TTL, so it self-expires unused — a benign,

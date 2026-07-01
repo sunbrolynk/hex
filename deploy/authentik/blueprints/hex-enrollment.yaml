@@ -87,6 +87,20 @@ entries:
     identifiers:
       name: hex-enrollment-login
 
+  # After enrollment, hand the now-signed-in user straight back to HEx instead of stranding them on
+  # Authentik's own UI (which a non-admin user can't view → a bare "permission denied"). Landing on
+  # HEx's /auth/login kicks off OIDC; since user-login just authenticated them, SSO passes through and
+  # HEx links + provisions their invite. ``next`` can't do this (Authentik rejects an external next);
+  # a RedirectStage static target is admin-configured and may point off-host. Target is the
+  # deployment's browser-facing HEx URL (HEX_PUBLIC_BASE_URL); the bundled default is the demo port.
+  - model: authentik_stages_redirect.redirectstage
+    id: hex-enrollment-redirect-stage
+    identifiers:
+      name: hex-enrollment-redirect
+    attrs:
+      mode: static
+      target_static: !Format ["%s/auth/login", !Env [HEX_PUBLIC_BASE_URL, "http://localhost:52000"]]
+
   # ── The enrollment flow ────────────────────────────────────────────────────
   - model: authentik_flows.flow
     id: hex-enrollment-flow
@@ -133,3 +147,10 @@ entries:
       target: !KeyOf hex-enrollment-flow
       stage: !KeyOf hex-enrollment-login-stage
       order: 30
+
+  - model: authentik_flows.flowstagebinding
+    id: hex-binding-redirect
+    identifiers:
+      target: !KeyOf hex-enrollment-flow
+      stage: !KeyOf hex-enrollment-redirect-stage
+      order: 40

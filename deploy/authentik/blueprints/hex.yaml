@@ -65,6 +65,23 @@ entries:
       groups:
         - !KeyOf hex-provisioner-group
 
+  # ── Custom claim: the HEx acceptance nonce stamped onto the user at enrollment ─
+  # user-write persists the invitation's fixed_data.attributes.hex_invite_nonce (Slice 6-2d). This
+  # mapping surfaces that high-entropy nonce as an ID-token claim so HEx binds the invite at the
+  # OIDC callback from a SIGNED token (tamper-proof) instead of the fragile browser cookie. Rides
+  # the already-requested `profile` scope (HEx is the sole client) — absent for non-invite users.
+  - model: authentik_providers_oauth2.scopemapping
+    id: hex-invite-claim
+    identifiers:
+      name: HEx invite nonce claim
+    attrs:
+      name: HEx invite nonce claim
+      scope_name: profile
+      description: HEx invite acceptance nonce (enrollment binding)
+      expression: |
+        nonce = request.user.attributes.get("hex_invite_nonce")
+        return {"hex_invite_nonce": nonce} if nonce else {}
+
   # ── Confidential OAuth2 provider for HEx's web BFF login ─────────────────────
   - model: authentik_providers_oauth2.oauth2provider
     id: hex-web-provider
@@ -86,12 +103,16 @@ entries:
         !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       signing_key:
         !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      # Emit scope-mapping claims in the ID token (not just userinfo) — HEx reads + validates the
+      # ID token at the callback, so the invite-id claim must ride there.
+      include_claims_in_id_token: true
       # Default OpenID scope mappings, matched by scope_name (fresh instance has
-      # only the shipped defaults).
+      # only the shipped defaults), plus the HEx invite-id claim above.
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !KeyOf hex-invite-claim
       # Strict-match BOTH browser hostnames — HEx builds the redirect from the host
       # the browser used and 127.0.0.1 != localhost under strict (spike gotcha #1).
       # 3a-2/owner-setup reconciles these to the owner's real public URL via API.

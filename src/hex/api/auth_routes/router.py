@@ -167,13 +167,17 @@ async def auth_callback(
     user = await UserManager(session).upsert(
         authentik_sub=claims.sub, username=claims.preferred_username, email=claims.email
     )
-    # If the user arrived via invite enrollment (6-2b set the nonce cookie), bind the invite to them
-    # now. A missing/forged/already-bound nonce is a no-op (login proceeds); a DB fault rolls back
-    # with the rest below (fail-secure — no session minted). The bind commits atomically with the
-    # session + audit below.
-    invite_nonce = request.cookies.get(INVITE_COOKIE)
+    # If the user arrived via invite enrollment, bind the invite to them now. The linkage is the
+    # acceptance nonce, carried two ways: the SIGNED ``hex_invite_nonce`` claim (primary, 6-2d —
+    # tamper-proof, survives a lost cookie) and the httponly cookie (fallback, 6-2b). Both match the
+    # invite's hashed nonce, so one ``link_to_user`` serves both. A missing/forged/already-bound
+    # nonce is a no-op (login proceeds); a DB fault during the bind unwinds with the txn
+    # (fail-secure — no session minted). The bind commits atomically with the session + audit below.
+    invite_manager = InviteManager(session)
+    invite_cookie = request.cookies.get(INVITE_COOKIE)
+    invite_nonce = claims.hex_invite_nonce or invite_cookie
     linked_invite = (
-        await InviteManager(session).link_to_user(invite_nonce, user.id) if invite_nonce else None
+        await invite_manager.link_to_user(invite_nonce, user.id) if invite_nonce else None
     )
     # Capture for post-commit provisioning before the login txn closes (avoids detached-instance
     # access). default_grants is the provider_id → grant map applied once, on first link.
@@ -220,7 +224,7 @@ async def auth_callback(
         samesite="lax",
         path="/",
     )
-    if invite_nonce:
+    if invite_cookie:
         response.delete_cookie(INVITE_COOKIE, path="/")  # enrollment trip is over
     return response
 
