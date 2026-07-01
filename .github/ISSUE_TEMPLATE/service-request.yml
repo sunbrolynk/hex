@@ -1,0 +1,70 @@
+name: 🔌 Service integration request
+description: Suggest an app/service HEx should be able to connect and provision.
+title: "[Service]: <name>"
+labels: ["service-request", "provider"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a service! HEx grows its catalog in curated waves — v1 ships a small,
+        proven set and breadth follows on the roadmap.
+
+        **Before you file:** please search existing [issues](https://github.com/sunbrolynk/hex/issues?q=label%3Aservice-request)
+        and the [Discussions](https://github.com/sunbrolynk/hex/discussions) — the service may
+        already be tracked, planned, or explicitly out of scope.
+  - type: input
+    id: service-name
+    attributes:
+      label: Service name
+      placeholder: e.g. Jellyfin
+    validations:
+      required: true
+  - type: input
+    id: project-url
+    attributes:
+      label: Project / homepage URL
+      placeholder: https://…
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      description: Roughly what kind of service is it?
+      options:
+        - Media (TV / Movies / Music / Photos)
+        - Requests
+        - Docs / Knowledge
+        - Home & Family
+        - Gaming
+        - Productivity
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: integration-mode
+    attributes:
+      label: How does it manage user access? (best guess — we'll confirm)
+      description: This maps to HEx's integration model; a guess is fine.
+      options:
+        - Behind SSO (Authentik / OIDC / forward-auth)
+        - Its own user API (local accounts it owns)
+        - External invite / share (you don't own the account, e.g. Plex)
+        - Manual / no API
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything that helps
+      description: API/auth docs, whether it supports OIDC/SSO, per-user permission model, why you want it.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and Discussions and this isn't already tracked.
+          required: true
