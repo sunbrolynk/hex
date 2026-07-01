@@ -363,6 +363,128 @@ async def test_callback_does_not_rebind_an_already_linked_invite(
     assert await _linked_invite_owner(sessionmaker) == 999  # first-wins, not rebound
 
 
+@respx.mock
+async def test_callback_links_invite_via_signed_claim(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    # The robust 6-2d path: NO cookie — the acceptance nonce rides the signed ``hex_invite_nonce``
+    # ID-token claim; the callback matches it against the invite's hashed nonce.
+    await _seed_state(sessionmaker, state="good")
+    await _seed_accepted_invite(sessionmaker, nonce="claim-nonce")
+    _mock_oidc(id_token=_oidc.id_token(hex_invite_nonce="claim-nonce"))
+    resp = await client.get(
+        "/auth/callback", params={"code": "c", "state": "good"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    async with sessionmaker() as session:
+        new_user = (
+            await session.execute(select(User).where(User.is_owner.is_(False)))
+        ).scalar_one()
+    assert await _linked_invite_owner(sessionmaker) == new_user.id
+    assert "invite.linked" in await _audit_actions(sessionmaker)
+
+
+@respx.mock
+async def test_callback_claim_takes_precedence_over_a_stale_cookie(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    # Claim is primary: it binds even when the cookie carries a non-matching (stale/forged) value.
+    await _seed_state(sessionmaker, state="good")
+    await _seed_accepted_invite(sessionmaker, nonce="real-nonce")
+    client.cookies.set("hex_invite", "forged-cookie")
+    _mock_oidc(id_token=_oidc.id_token(hex_invite_nonce="real-nonce"))
+    resp = await client.get(
+        "/auth/callback", params={"code": "c", "state": "good"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    async with sessionmaker() as session:
+        new_user = (
+            await session.execute(select(User).where(User.is_owner.is_(False)))
+        ).scalar_one()
+    assert await _linked_invite_owner(sessionmaker) == new_user.id  # bound via claim, not cookie
+
+
+@respx.mock
+async def test_callback_forged_claim_nonce_does_not_link_but_login_succeeds(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    await _seed_state(sessionmaker, state="good")
+    await _seed_accepted_invite(sessionmaker, nonce="real-nonce")
+    _mock_oidc(id_token=_oidc.id_token(hex_invite_nonce="guessed-nonce"))  # no matching invite
+    resp = await client.get(
+        "/auth/callback", params={"code": "c", "state": "good"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert await _linked_invite_owner(sessionmaker) is None
+
+
+@respx.mock
+async def test_callback_claim_does_not_rebind_an_already_linked_invite(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    await _seed_state(sessionmaker, state="good")
+    await _seed_accepted_invite(sessionmaker, nonce="n", accepted_by=999)
+    _mock_oidc(id_token=_oidc.id_token(hex_invite_nonce="n"))
+    resp = await client.get(
+        "/auth/callback", params={"code": "c", "state": "good"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert await _linked_invite_owner(sessionmaker) == 999  # first-wins, not rebound
+
+
+@respx.mock
+async def test_callback_claim_bind_rolls_back_when_login_persist_fails(
+    client: AsyncClient,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Claim-path parity with the cookie rollback test: a failed login audit/commit must leave the
+    # invite UNbound (fail-secure — no session minted, no half-bound capability).
+    await _seed_state(sessionmaker, state="good")
+    await _seed_accepted_invite(sessionmaker, nonce="claim-nonce")
+    _mock_oidc(id_token=_oidc.id_token(hex_invite_nonce="claim-nonce"))
+
+    async def boom(self: AuditLogManager, **kwargs: object) -> None:
+        raise RuntimeError("audit backend down")
+
+    monkeypatch.setattr(AuditLogManager, "append", boom)
+    resp = await client.get(
+        "/auth/callback", params={"code": "c", "state": "good"}, follow_redirects=False
+    )
+    assert resp.status_code == 302  # clean redirect, not 500
+    assert await _session_count(sessionmaker) == 0  # session rolled back
+    assert await _linked_invite_owner(sessionmaker) is None  # claim bind rolled back too
+
+
+@respx.mock
+async def test_callback_provisions_invite_linked_via_claim(
+    engine: AsyncEngine, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    # End-to-end robust arc: signed nonce claim → link → provision, with no cookie involved.
+    app = create_app(_settings(env="dev"))
+    app.state.engine = engine
+    app.state.sessionmaker = sessionmaker
+    app.state.registry.register(ReferenceLocalProvider(healthy=True))
+    await _seed_state(sessionmaker, state="good")
+    await _seed_accepted_invite(
+        sessionmaker, nonce="claim-nonce", grants={"ref-local": {"tier": "premium"}}
+    )
+    _mock_oidc(id_token=_oidc.id_token(hex_invite_nonce="claim-nonce"))
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        resp = await ac.get(
+            "/auth/callback", params={"code": "c", "state": "good"}, follow_redirects=False
+        )
+    assert resp.status_code == 302
+    async with sessionmaker() as session:
+        new_user = (
+            await session.execute(select(User).where(User.is_owner.is_(False)))
+        ).scalar_one()
+        entry = await LedgerManager(session).current_entry(new_user.id, "ref-local")
+    assert entry is not None and entry.state == ProvisionState.GRANTED
+    assert "provisioning.applied" in await _audit_actions(sessionmaker)
+
+
 async def _run_callback_with_provider(
     engine: AsyncEngine,
     sessionmaker: async_sessionmaker[AsyncSession],

@@ -93,9 +93,10 @@ class InviteManager:
     async def link_to_user(self, nonce: str, user_id: int) -> Invite | None:
         """Bind an accepted invite to the user who completed enrollment; None if no match.
 
-        Matched by the acceptance nonce (set in 6-2b, carried in the httponly cookie); first-wins
-        via ``accepted_by IS NULL`` so a replay can't re-bind. No commit — the caller owns the txn
-        (the bind commits atomically with the login session + audit).
+        Matched by the acceptance nonce — carried in the signed ``hex_invite_nonce`` claim (primary,
+        6-2d) or the httponly cookie (fallback, 6-2b); both hash to ``accept_nonce_hash``.
+        First-wins via ``accepted_by IS NULL`` so a replay can't re-bind; the nonce hash only exists
+        on an accepted invite. No commit — caller owns the txn (binds atomically with login).
         """
         nonce_hash = hash_token(nonce)
         result = cast(

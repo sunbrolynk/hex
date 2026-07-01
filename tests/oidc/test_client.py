@@ -15,9 +15,19 @@ from hex.oidc import (
     OIDCNotConfigured,
     OIDCValidationError,
 )
+from hex.oidc.client import _clean_invite_nonce
 from tests.oidc import _oidc
 
 _REDIRECT = "http://localhost:52000/auth/callback"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("abc123", "abc123"), ("", None), (None, None), (42, None), (True, None), ([], None)],
+)
+def test_clean_invite_nonce(value: object, expected: str | None) -> None:
+    # Fail-closed: only a non-empty string survives; a missing/non-string claim yields None.
+    assert _clean_invite_nonce(value) == expected
 
 
 async def _exchange(

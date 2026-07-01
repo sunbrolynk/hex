@@ -16,6 +16,12 @@ _SCOPES = "openid profile email"
 _LEEWAY_SECONDS = 30  # clock-skew tolerance for exp/nbf/iat
 
 
+def _clean_invite_nonce(value: Any) -> str | None:
+    """The ``hex_invite_nonce`` claim as a non-empty string, else None — fail-closed (a missing or
+    non-string claim must not raise; the nonce is matched against the invite's hashed nonce)."""
+    return value if isinstance(value, str) and value else None
+
+
 @dataclass(frozen=True)
 class OIDCClaims:
     """The validated identity claims HEx consumes."""
@@ -23,6 +29,10 @@ class OIDCClaims:
     sub: str
     email: str | None
     preferred_username: str | None
+    # Set only for users who enrolled via a HEx invite (Slice 6-2d): the high-entropy acceptance
+    # nonce, stamped onto the Authentik user at enrollment and emitted as a signed claim. Binds the
+    # invite at login (matched against the invite's hashed nonce), tamper-proof and cookie-free.
+    hex_invite_nonce: str | None
     raw: dict[str, Any]
 
 
@@ -110,5 +120,6 @@ class OIDCClient:
             sub=claims["sub"],
             email=claims.get("email"),
             preferred_username=claims.get("preferred_username"),
+            hex_invite_nonce=_clean_invite_nonce(claims.get("hex_invite_nonce")),
             raw=claims,
         )
