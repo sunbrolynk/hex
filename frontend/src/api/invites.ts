@@ -1,15 +1,26 @@
 // Owner-only invite management (BFF; the backend enforces require_owner). The raw token comes back
 // exactly once on creation — the UI surfaces it as a one-time link.
 
+export type RecipientKind = 'email' | 'phone' | 'label'
+
 export interface Invite {
   id: number
   status: string
   requestable: string[]
   grant_providers: string[]
+  recipient: string | null
+  recipient_kind: string | null
   created_at: string
   expires_at: string
   accepted_at: string | null
   revoked_at: string | null
+}
+
+export interface InvitePage {
+  items: Invite[]
+  total: number
+  limit: number
+  offset: number
 }
 
 export interface CreatedInvite {
@@ -18,16 +29,19 @@ export interface CreatedInvite {
   expires_at: string
 }
 
-export async function listInvites(): Promise<Invite[]> {
-  const res = await fetch('/invites')
+export async function listInvites(params: { limit: number; offset: number }): Promise<InvitePage> {
+  const q = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) })
+  const res = await fetch(`/invites?${q}`)
   if (!res.ok) throw new Error(`invites ${res.status}`)
-  return (await res.json()) as Invite[]
+  return (await res.json()) as InvitePage
 }
 
 export async function createInvite(input: {
   ttl_hours: number
   requestable: string[]
   default_grants?: Record<string, string> // provider_id -> tier key (server resolves to the grant)
+  recipient?: string // owner-only "who"; server validates + normalizes per kind
+  recipient_kind?: RecipientKind
 }): Promise<CreatedInvite> {
   const res = await fetch('/invites', {
     method: 'POST',

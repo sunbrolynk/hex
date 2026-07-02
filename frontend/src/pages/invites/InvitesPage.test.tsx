@@ -14,6 +14,8 @@ const ACTIVE = {
   status: 'active',
   requestable: [],
   grant_providers: [],
+  recipient: null,
+  recipient_kind: null,
   created_at: '2030-01-01T00:00:00Z',
   expires_at: '2030-01-01T00:00:00Z',
   accepted_at: null,
@@ -41,7 +43,8 @@ const SINGLE = {
 }
 
 interface Opts {
-  invites?: unknown
+  invites?: Record<string, unknown>[]
+  total?: number
   providers?: unknown
   createStatus?: number
   listStatus?: number
@@ -61,11 +64,23 @@ function mockApi(o: Opts = {}) {
         o.createStatus ?? 200,
       )
     }
-    if (u.includes('/invites')) return json(o.invites ?? [], o.listStatus ?? 200)
+    if (u.includes('/invites')) {
+      const items = o.invites ?? []
+      return json(
+        { items, total: o.total ?? items.length, limit: 25, offset: 0 },
+        o.listStatus ?? 200,
+      )
+    }
     return json({})
   })
   vi.stubGlobal('fetch', fetchMock)
   return fetchMock
+}
+
+// The last GET /invites query string the mock saw — asserts pagination params.
+function lastListUrl(fetchMock: ReturnType<typeof mockApi>): string {
+  const calls = fetchMock.mock.calls.map((c) => String(c[0]))
+  return calls.filter((u) => u.includes('/invites') && !u.endsWith('/revoke')).at(-1) ?? ''
 }
 
 function renderAs(isOwner: boolean) {
@@ -159,6 +174,67 @@ describe('InvitesPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create invite' }))
     await screen.findByText(/\/invite\/raw-tok/)
     expect(posted).toEqual(expect.objectContaining({ default_grants: {}, requestable: [] }))
+  })
+
+  it('sends a chosen recipient with its kind', async () => {
+    let posted: Record<string, unknown> | null = null
+    mockApi({ onPost: (b) => (posted = b) })
+    renderAs(true)
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Recipient type' }), {
+      target: { value: 'email' },
+    })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Recipient' }), {
+      target: { value: 'User@Example.com' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }))
+    await screen.findByText(/\/invite\/raw-tok/)
+    expect(posted).toEqual(
+      expect.objectContaining({ recipient: 'User@Example.com', recipient_kind: 'email' }),
+    )
+  })
+
+  it('omits recipient when no type is chosen', async () => {
+    let posted: Record<string, unknown> | null = null
+    mockApi({ onPost: (b) => (posted = b) })
+    renderAs(true)
+    fireEvent.click(await screen.findByRole('button', { name: 'Create invite' }))
+    await screen.findByText(/\/invite\/raw-tok/)
+    expect(posted).not.toHaveProperty('recipient')
+    expect(posted).not.toHaveProperty('recipient_kind')
+  })
+
+  it('shows recipient (who) and granted services (what) in the history', async () => {
+    mockApi({
+      invites: [
+        {
+          ...ACTIVE,
+          recipient: 'a@b.com',
+          recipient_kind: 'email',
+          grant_providers: ['demo-media'],
+        },
+      ],
+    })
+    renderAs(true)
+    expect(await screen.findByText(/email: a@b\.com/)).toBeInTheDocument()
+    expect(screen.getByText(/grants: demo-media/)).toBeInTheDocument()
+  })
+
+  it('pages forward and requests the next offset', async () => {
+    const fetchMock = mockApi({ invites: [ACTIVE], total: 60 })
+    renderAs(true)
+    const next = await screen.findByRole('button', { name: 'Next' })
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled()
+    fireEvent.click(next)
+    await vi.waitFor(() => expect(lastListUrl(fetchMock)).toMatch(/offset=25/))
+  })
+
+  it('changes page size and refetches from the start', async () => {
+    const fetchMock = mockApi({ invites: [ACTIVE], total: 60 })
+    renderAs(true)
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Per page' }), {
+      target: { value: '10' },
+    })
+    await vi.waitFor(() => expect(lastListUrl(fetchMock)).toMatch(/limit=10&offset=0/))
   })
 
   it('surfaces an error when create fails', async () => {

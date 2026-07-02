@@ -259,6 +259,11 @@ class Invite(Base):
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     default_grants: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     requestable: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # Optional owner-facing "who" the invite is for — a normalized email/phone or a free label
+    # (recipient_kind). Owner-only metadata: never surfaced on the public preview. Not identity
+    # (Authentik owns that); it's a contact hint the delivery slices will send to.
+    recipient: Mapped[str | None] = mapped_column(String(320), default=None)
+    recipient_kind: Mapped[str | None] = mapped_column(String(16), default=None)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     accepted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), default=None)

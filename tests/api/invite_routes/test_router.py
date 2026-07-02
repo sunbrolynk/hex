@@ -238,9 +238,10 @@ async def test_list_and_revoke(
     await _auth(client, sessionmaker)
     created = (await client.post("/invites", json={"ttl_hours": 24})).json()
 
-    listed = (await client.get("/invites")).json()
-    assert [i["id"] for i in listed] == [created["id"]]
-    assert listed[0]["status"] == "active"
+    page = (await client.get("/invites")).json()
+    assert [i["id"] for i in page["items"]] == [created["id"]]
+    assert page["items"][0]["status"] == "active"
+    assert page["total"] == 1
 
     revoked = (await client.post(f"/invites/{created['id']}/revoke", json={})).json()
     assert revoked["status"] == "revoked"
@@ -336,7 +337,7 @@ async def test_list_shows_accepted_and_expired_status(
             )
         )
         await session.commit()
-    statuses = {i["status"] for i in (await client.get("/invites")).json()}
+    statuses = {i["status"] for i in (await client.get("/invites")).json()["items"]}
     assert {"accepted", "expired"} <= statuses
 
 
@@ -556,6 +557,108 @@ async def test_preview_is_rate_limited(
     for _ in range(10):
         assert (await client.get("/invite/bad/preview")).status_code == 404
     assert (await client.get("/invite/bad/preview")).status_code == 429
+
+
+async def test_create_normalizes_and_stores_recipient(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    # The owner-facing "who" is validated + normalized (email domain lowercased) and round-trips.
+    await _auth(client, sessionmaker)
+    created = (
+        await client.post(
+            "/invites", json={"recipient": "User@Example.COM", "recipient_kind": "email"}
+        )
+    ).json()
+    async with sessionmaker() as session:
+        invite = (await session.execute(select(Invite))).scalar_one()
+    assert invite.recipient == "User@example.com"
+    listed = (await client.get("/invites")).json()["items"]
+    assert listed[0]["recipient"] == "User@example.com"
+    assert listed[0]["recipient_kind"] == "email"
+    assert created["id"] == invite.id
+
+
+async def test_create_normalizes_phone_to_e164(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    await _auth(client, sessionmaker)
+    await client.post(
+        "/invites", json={"recipient": "+1 (415) 555-2671", "recipient_kind": "phone"}
+    )
+    async with sessionmaker() as session:
+        invite = (await session.execute(select(Invite))).scalar_one()
+    assert invite.recipient == "+14155552671"
+
+
+async def test_create_accepts_a_plain_label(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    await _auth(client, sessionmaker)
+    await client.post(
+        "/invites", json={"recipient": "  Grandma’s tablet  ", "recipient_kind": "label"}
+    )
+    async with sessionmaker() as session:
+        invite = (await session.execute(select(Invite))).scalar_one()
+    assert invite.recipient == "Grandma’s tablet"  # trimmed
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"recipient": "a@b.com"},  # kind missing
+        {"recipient_kind": "email"},  # recipient missing
+        {"recipient": "", "recipient_kind": "email"},  # empty value
+        {"recipient": "not-an-email", "recipient_kind": "email"},  # bad email
+        {"recipient": "+1 555", "recipient_kind": "phone"},  # not a valid number
+        {"recipient": "a@b.com\nBcc: evil@x.com", "recipient_kind": "email"},  # header injection
+        {"recipient": "x@y.com", "recipient_kind": "carrier-pigeon"},  # unknown kind
+    ],
+)
+async def test_create_rejects_bad_recipient(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession], body: dict[str, str]
+) -> None:
+    await _auth(client, sessionmaker)
+    assert (await client.post("/invites", json=body)).status_code == 422
+    await _assert_nothing_stored(sessionmaker)
+
+
+async def test_preview_never_leaks_recipient(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    # Recipient is owner-only metadata: the public preview must not expose it.
+    await _auth(client, sessionmaker)
+    token = (
+        await client.post(
+            "/invites", json={"recipient": "who@example.com", "recipient_kind": "email"}
+        )
+    ).json()["token"]
+    body = (await client.get(f"/invite/{token}/preview")).json()
+    assert "recipient" not in body
+    assert "recipient_kind" not in body
+
+
+async def test_list_paginates_newest_first_with_total(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession]
+) -> None:
+    await _auth(client, sessionmaker)
+    ids = [(await client.post("/invites", json={})).json()["id"] for _ in range(3)]
+
+    first = (await client.get("/invites?limit=2&offset=0")).json()
+    assert first["total"] == 3
+    assert first["limit"] == 2 and first["offset"] == 0
+    assert [i["id"] for i in first["items"]] == [ids[2], ids[1]]  # newest first
+
+    second = (await client.get("/invites?limit=2&offset=2")).json()
+    assert [i["id"] for i in second["items"]] == [ids[0]]
+    assert second["total"] == 3
+
+
+@pytest.mark.parametrize("query", ["limit=0", "limit=101", "offset=-1"])
+async def test_list_rejects_out_of_range_pagination(
+    client: AsyncClient, sessionmaker: async_sessionmaker[AsyncSession], query: str
+) -> None:
+    await _auth(client, sessionmaker)
+    assert (await client.get(f"/invites?{query}")).status_code == 422
 
 
 async def test_link_to_user_binds_first_wins_by_nonce(

@@ -8,7 +8,7 @@ returned to the owner once. No commit — the caller owns the transaction.
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, select, update
+from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hex.database.models import Invite
@@ -32,6 +32,8 @@ class InviteManager:
         default_grants: dict[str, Any],
         requestable: list[str],
         ttl_seconds: int,
+        recipient: str | None = None,
+        recipient_kind: str | None = None,
     ) -> tuple[Invite, str]:
         """Mint an invite; store its hash; return the row and the raw token (shown once)."""
         raw = mint_token()
@@ -40,16 +42,26 @@ class InviteManager:
             created_by=owner_id,
             default_grants=default_grants,
             requestable=requestable,
+            recipient=recipient,
+            recipient_kind=recipient_kind,
             expires_at=datetime.now(UTC) + timedelta(seconds=ttl_seconds),
         )
         self._session.add(invite)
         await self._session.flush()
         return invite, raw
 
-    async def list_all(self) -> list[Invite]:
-        """Every invite, newest first (single-owner install)."""
-        result = await self._session.execute(select(Invite).order_by(Invite.id.desc()))
+    async def list_page(self, *, limit: int, offset: int) -> list[Invite]:
+        """One page of invites, newest first."""
+        result = await self._session.execute(
+            select(Invite).order_by(Invite.id.desc()).limit(limit).offset(offset)
+        )
         return list(result.scalars().all())
+
+    async def count(self) -> int:
+        """Total invites (for pagination)."""
+        return int(
+            (await self._session.execute(select(func.count()).select_from(Invite))).scalar_one()
+        )
 
     async def revoke(self, invite_id: int) -> Invite | None:
         """Revoke an unaccepted, unrevoked invite; return it, or None if it can't be revoked."""

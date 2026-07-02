@@ -21,6 +21,12 @@ dependencies = [
     # security-critical, so they are exact-pinned like cryptography. pyotp is pure-Python.
     "argon2-cffi==25.1.0",
     "pyotp==2.10.0",
+    # Invite recipient ("who") correctness (Slice 6-1c): email-validator normalizes/validates the
+    # email kind with deliverability OFF (no DNS/outbound — non-negotiable #11); phonenumbers
+    # validates + normalizes the phone kind to E.164 with real number-plan awareness. Both
+    # pure-Python, no runtime network. email-validator pulls dnspython transitively (never invoked).
+    "email-validator==2.2.0",
+    "phonenumbers==8.13.55",
 ]
 
 [dependency-groups]

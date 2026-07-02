@@ -18,14 +18,21 @@ function mockFetch(resp: { ok: boolean; status: number; body?: unknown }) {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('invites api', () => {
-  it('lists invites', async () => {
-    mockFetch({ ok: true, status: 200, body: [{ id: 1, status: 'active' }] })
-    expect(await listInvites()).toHaveLength(1)
+  it('lists invites with pagination params', async () => {
+    const fetchMock = mockFetch({
+      ok: true,
+      status: 200,
+      body: { items: [{ id: 1, status: 'active' }], total: 1, limit: 25, offset: 0 },
+    })
+    const page = await listInvites({ limit: 25, offset: 0 })
+    expect(page.items).toHaveLength(1)
+    expect(page.total).toBe(1)
+    expect(fetchMock).toHaveBeenCalledWith('/invites?limit=25&offset=0')
   })
 
   it('throws when listing fails', async () => {
     mockFetch({ ok: false, status: 403 })
-    await expect(listInvites()).rejects.toThrow(/invites 403/)
+    await expect(listInvites({ limit: 25, offset: 0 })).rejects.toThrow(/invites 403/)
   })
 
   it('creates an invite and returns the one-time token', async () => {
