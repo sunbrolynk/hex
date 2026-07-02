@@ -20,6 +20,7 @@ const ACTIVE = {
   revoked_at: null,
 }
 
+// A provider that offers a real choice (2 tiers → a Level picker should appear when granted).
 const MEDIA = {
   id: 'demo-media',
   name: 'Demo Media',
@@ -29,6 +30,14 @@ const MEDIA = {
     { key: 'standard', label: 'Standard', description: null },
     { key: 'premium', label: 'Premium', description: null },
   ],
+}
+// A single-option provider (no meaningful level → no Level picker).
+const SINGLE = {
+  id: 'demo-x',
+  name: 'Demo X',
+  category: 'misc',
+  integration_mode: 'sso_group',
+  tiers: [{ key: 'default', label: 'Default', description: null }],
 }
 
 interface Opts {
@@ -68,6 +77,8 @@ function renderAs(isOwner: boolean) {
   )
 }
 
+const addPicker = () => screen.findByRole('combobox', { name: 'Add a service' })
+
 afterEach(() => vi.unstubAllGlobals())
 
 describe('InvitesPage', () => {
@@ -83,25 +94,29 @@ describe('InvitesPage', () => {
     expect(await screen.findByText(/#1 — active/)).toBeInTheDocument()
   })
 
-  it('renders the grantable services from the catalog', async () => {
+  it('offers the catalog services in the add-a-service dropdown', async () => {
     mockApi({ providers: [MEDIA] })
     renderAs(true)
-    expect(await screen.findByText(/Grant Demo Media/)).toBeInTheDocument()
+    expect(await screen.findByRole('option', { name: /Demo Media/ })).toBeInTheDocument()
   })
 
-  it('shows an empty state when no services are available', async () => {
+  it('shows an empty state when no services exist', async () => {
     mockApi({ providers: [] })
     renderAs(true)
-    expect(await screen.findByText(/No services available to grant yet/)).toBeInTheDocument()
+    expect(await screen.findByText(/No services available yet/)).toBeInTheDocument()
   })
 
-  it('creates an invite granting a picked service+tier and surfaces the link', async () => {
+  it('grants an added service at a chosen level and sends the tier key', async () => {
     let posted: Record<string, unknown> | null = null
     mockApi({ providers: [MEDIA], onPost: (b) => (posted = b) })
     renderAs(true)
-    // Grant Demo Media (defaults to the first tier: standard), then pick premium.
-    fireEvent.click(await screen.findByRole('checkbox', { name: /Grant Demo Media/ }))
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'premium' } })
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Add a service' }), {
+      target: { value: 'demo-media' },
+    })
+    // 2-tier provider → a Level picker appears; choose Premium.
+    fireEvent.change(screen.getByRole('combobox', { name: 'Level' }), {
+      target: { value: 'premium' },
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Create invite' }))
     expect(await screen.findByText(/\/invite\/raw-tok/)).toBeInTheDocument()
     expect(posted).toEqual(
@@ -109,11 +124,25 @@ describe('InvitesPage', () => {
     )
   })
 
-  it('sends a requestable-only selection without a grant', async () => {
+  it('shows no level picker for a single-option service and sends its only tier', async () => {
+    let posted: Record<string, unknown> | null = null
+    mockApi({ providers: [SINGLE], onPost: (b) => (posted = b) })
+    renderAs(true)
+    fireEvent.change(await addPicker(), { target: { value: 'demo-x' } })
+    expect(screen.queryByRole('combobox', { name: 'Level' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }))
+    await screen.findByText(/\/invite\/raw-tok/)
+    expect(posted).toEqual(
+      expect.objectContaining({ default_grants: { 'demo-x': 'default' }, requestable: [] }),
+    )
+  })
+
+  it('marks an added service requestable-only', async () => {
     let posted: Record<string, unknown> | null = null
     mockApi({ providers: [MEDIA], onPost: (b) => (posted = b) })
     renderAs(true)
-    fireEvent.click(await screen.findByRole('checkbox', { name: /Requestable later/ }))
+    fireEvent.change(await addPicker(), { target: { value: 'demo-media' } })
+    fireEvent.click(screen.getByRole('radio', { name: 'Requestable later' }))
     fireEvent.click(screen.getByRole('button', { name: 'Create invite' }))
     await screen.findByText(/\/invite\/raw-tok/)
     expect(posted).toEqual(
@@ -121,10 +150,15 @@ describe('InvitesPage', () => {
     )
   })
 
-  it('surfaces an error when the list fails to load', async () => {
-    mockApi({ listStatus: 403 })
+  it('removing an added service returns it to hidden (not sent)', async () => {
+    let posted: Record<string, unknown> | null = null
+    mockApi({ providers: [MEDIA], onPost: (b) => (posted = b) })
     renderAs(true)
-    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn’t load invites/i)
+    fireEvent.change(await addPicker(), { target: { value: 'demo-media' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }))
+    await screen.findByText(/\/invite\/raw-tok/)
+    expect(posted).toEqual(expect.objectContaining({ default_grants: {}, requestable: [] }))
   })
 
   it('surfaces an error when create fails', async () => {

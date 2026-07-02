@@ -28,11 +28,11 @@ async def test_demo_provider_always_grants_and_is_present() -> None:
     assert (await provider.deprovision(_USER, _ENTRY)).revoked
 
 
-def test_demo_media_offers_tiers() -> None:
+def test_demo_offers_a_single_default_grant() -> None:
+    # Demos have no real access levels — one option, so the invite UI shows no (fake) level picker.
     tiers = DemoMediaProvider().available_grants()
-    assert {t.key for t in tiers} == {"standard", "premium"}
-    # A tier resolves to the provider's structured grant (what the invite stores).
-    assert next(t for t in tiers if t.key == "premium").grant == {"tier": "premium"}
+    assert [t.key for t in tiers] == ["default"]
+    assert tiers[0].grant == {"tier": "default"}  # resolves to the provider's structured grant
 
 
 def test_register_demo_providers_off_by_default() -> None:
