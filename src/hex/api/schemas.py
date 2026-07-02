@@ -2,8 +2,9 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from hex.api.recipient import RecipientKind, normalize_recipient
 from hex.database.models import SetupPhase
 
 
@@ -104,6 +105,18 @@ class InviteCreateRequest(BaseModel):
     default_grants: dict[str, str] = Field(default_factory=dict)  # provider_id -> tier key
     requestable: list[str] = Field(default_factory=list)
     ttl_hours: int = Field(default=168, ge=1, le=8760)  # 1h … 1y; default 7 days
+    # Optional "who" (owner-only). recipient + recipient_kind are all-or-nothing; the value is
+    # validated + normalized per kind (email→RFC, phone→E.164, label→trimmed) — a bad value is 422.
+    recipient: str | None = Field(default=None, max_length=320)
+    recipient_kind: RecipientKind | None = None
+
+    @model_validator(mode="after")
+    def _normalize_recipient(self) -> "InviteCreateRequest":
+        if (self.recipient is None) != (self.recipient_kind is None):
+            raise ValueError("recipient and recipient_kind must be provided together")
+        if self.recipient is not None and self.recipient_kind is not None:
+            self.recipient = normalize_recipient(self.recipient_kind, self.recipient)
+        return self
 
 
 class InviteCreatedResponse(BaseModel):
@@ -121,10 +134,21 @@ class InviteResponse(BaseModel):
     status: str  # active | accepted | revoked | expired
     requestable: list[str]
     grant_providers: list[str]
+    recipient: str | None
+    recipient_kind: str | None
     created_at: datetime
     expires_at: datetime
     accepted_at: datetime | None
     revoked_at: datetime | None
+
+
+class InviteListResponse(BaseModel):
+    """A page of the owner's invite history plus the total for pagination."""
+
+    items: list[InviteResponse]
+    total: int
+    limit: int
+    offset: int
 
 
 class InvitePreviewResponse(BaseModel):

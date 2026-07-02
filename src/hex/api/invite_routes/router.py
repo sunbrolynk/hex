@@ -11,7 +11,7 @@ import time
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,7 @@ from hex.api.schemas import (
     InviteAcceptResponse,
     InviteCreatedResponse,
     InviteCreateRequest,
+    InviteListResponse,
     InvitePreviewResponse,
     InviteResponse,
 )
@@ -107,6 +108,8 @@ def _to_response(invite: Invite) -> InviteResponse:
         status=_status(invite),
         requestable=invite.requestable,
         grant_providers=sorted(invite.default_grants),
+        recipient=invite.recipient,
+        recipient_kind=invite.recipient_kind,
         created_at=invite.created_at,
         expires_at=invite.expires_at,
         accepted_at=invite.accepted_at,
@@ -137,6 +140,8 @@ async def create_invite(
             default_grants=resolved_grants,
             requestable=body.requestable,
             ttl_seconds=body.ttl_hours * 3600,
+            recipient=body.recipient,
+            recipient_kind=body.recipient_kind,
         )
         await AuditLogManager(session, request.app.state.audit_signer).append(
             action=AuditAction.INVITE_CREATED,
@@ -158,9 +163,13 @@ async def create_invite(
 async def list_invites(
     owner: Annotated[User, Depends(require_owner)],
     session: Annotated[AsyncSession, Depends(get_session)],
-) -> list[InviteResponse]:
-    """Every invite with its computed status — never the token."""
-    return [_to_response(invite) for invite in await InviteManager(session).list_all()]
+    limit: Annotated[int, Query(ge=1, le=100)] = 25,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> InviteListResponse:
+    """A page of invites (newest first) with computed status + total — never the token."""
+    manager = InviteManager(session)
+    items = [_to_response(invite) for invite in await manager.list_page(limit=limit, offset=offset)]
+    return InviteListResponse(items=items, total=await manager.count(), limit=limit, offset=offset)
 
 
 @router.post("/invites/{invite_id}/revoke", dependencies=list(_OWNER_ONLY))
