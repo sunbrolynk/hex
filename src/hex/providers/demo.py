@@ -40,9 +40,10 @@ class _DemoProvider(Provider):
     grant_model: ClassVar[type[Grant]] = DemoGrant
     capabilities: ClassVar[frozenset[Capability]] = frozenset({Capability.AVAILABLE_GRANTS})
     link: ClassVar[str]  # where the tile deep-links (real providers will source this from config)
-    # Tiers the owner can offer (key, label). The owner picks a key at invite time; HEx resolves it
-    # to the structured grant — no owner-authored grant blobs (ADR 0015).
-    tiers: ClassVar[tuple[tuple[str, str], ...]] = (("standard", "Standard"),)
+    # A single grant option — demos have no real access levels, so the owner just grants the service
+    # (the UI shows no level picker for a one-option provider). Real providers expose meaningful
+    # tiers here (Authentik groups) at Phase 4; the picker appears only when a provider offers >1.
+    tiers: ClassVar[tuple[tuple[str, str], ...]] = (("default", "Default access"),)
 
     def available_grants(self) -> list[GrantTemplate]:
         return [
@@ -68,7 +69,6 @@ class DemoMediaProvider(_DemoProvider):
     category = "media"
     integration_mode = IntegrationMode.SSO_GROUP
     link = "https://media.demo.hex.local"
-    tiers = (("standard", "Standard"), ("premium", "Premium"))
 
 
 class DemoRequestsProvider(_DemoProvider):
