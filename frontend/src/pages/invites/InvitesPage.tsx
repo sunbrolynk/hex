@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type Invite,
   type RecipientKind,
@@ -46,6 +46,7 @@ export function InvitesPage() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
+  const formRef = useRef<HTMLFormElement>(null)
   const reload = useCallback(() => setReloadKey((k) => k + 1), [])
 
   useEffect(() => {
@@ -143,6 +144,7 @@ export function InvitesPage() {
       >
         <summary>New invitation</summary>
         <form
+          ref={formRef}
           onSubmit={(e: FormEvent) => {
             e.preventDefault()
             void onCreate(false)
@@ -154,7 +156,10 @@ export function InvitesPage() {
               Recipient type
               <select
                 value={recipientKind}
-                onChange={(e) => setRecipientKind(e.target.value as '' | RecipientKind)}
+                onChange={(e) => {
+                  setRecipientKind(e.target.value as '' | RecipientKind)
+                  setRecipient('') // a value valid for one kind isn't for another
+                }}
               >
                 <option value="">None (share the link yourself)</option>
                 {RECIPIENT_KINDS.map((k) => (
@@ -266,7 +271,14 @@ export function InvitesPage() {
           <button type="submit" disabled={busy}>
             {busy ? 'Creating…' : 'Create invite'}
           </button>
-          <button type="button" disabled={busy} onClick={() => void onCreate(true)}>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              if (formRef.current?.reportValidity() === false) return // enforce required/type
+              void onCreate(true)
+            }}
+          >
             Create &amp; add another
           </button>
         </form>

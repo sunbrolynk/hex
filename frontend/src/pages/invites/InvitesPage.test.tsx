@@ -193,6 +193,34 @@ describe('InvitesPage', () => {
     )
   })
 
+  it('clears the recipient value when the kind changes', async () => {
+    mockApi()
+    renderAs(true)
+    const kind = await screen.findByRole('combobox', { name: 'Recipient type' })
+    fireEvent.change(kind, { target: { value: 'email' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Recipient' }), {
+      target: { value: 'a@b.com' },
+    })
+    fireEvent.change(kind, { target: { value: 'phone' } })
+    expect(screen.getByRole('textbox', { name: 'Recipient' })).toHaveValue('')
+  })
+
+  it('blocks “add another” when a required recipient is empty', async () => {
+    let posted: Record<string, unknown> | null = null
+    const fetchMock = mockApi({ onPost: (b) => (posted = b) })
+    renderAs(true)
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Recipient type' }), {
+      target: { value: 'email' },
+    })
+    // leave the required recipient empty
+    fireEvent.click(screen.getByRole('button', { name: 'Create & add another' }))
+    const posts = fetchMock.mock.calls.filter(
+      (c) => (c[1] as RequestInit | undefined)?.method === 'POST',
+    )
+    expect(posts).toHaveLength(0)
+    expect(posted).toBeNull()
+  })
+
   it('omits recipient when no type is chosen', async () => {
     let posted: Record<string, unknown> | null = null
     mockApi({ onPost: (b) => (posted = b) })

@@ -1,5 +1,7 @@
 """Recipient validation/normalization — the injection-safe, correctness-grade "who"."""
 
+import socket
+
 import pytest
 
 from hex.api.recipient import MAX_LEN, normalize_recipient
@@ -26,6 +28,9 @@ def test_label_is_trimmed_and_kept() -> None:
         ("email", "a@b.com\r\nBcc: evil@x.com"),  # CR/LF header injection
         ("label", "line break"),  # unicode line separator
         ("label", "bell\x07"),  # C0 control
+        ("label", "spoof‮evil"),  # BiDi override — visual spoofing
+        ("label", "zero​width"),  # zero-width space
+        ("email", "a​@b.com"),  # invisible char smuggled into email
         ("phone", "+1 555"),  # not a valid number plan
         ("phone", "banana"),  # unparseable
     ],
@@ -33,6 +38,17 @@ def test_label_is_trimmed_and_kept() -> None:
 def test_bad_values_raise(kind: str, value: str) -> None:
     with pytest.raises(ValueError):  # noqa: PT011 — message text isn't part of the contract
         normalize_recipient(kind, value)  # type: ignore[arg-type]
+
+
+def test_email_validation_makes_no_network_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Non-negotiable #11 (no phone-home): email validation must never resolve DNS. Sabotage all
+    # name resolution and assert the email path still succeeds (deliverability check is OFF).
+    def _boom(*_a: object, **_k: object) -> object:
+        raise AssertionError("recipient validation attempted a network/DNS call")
+
+    monkeypatch.setattr(socket, "getaddrinfo", _boom)
+    monkeypatch.setattr(socket, "create_connection", _boom)
+    assert normalize_recipient("email", "who@example.com") == "who@example.com"
 
 
 def test_over_length_is_rejected() -> None:

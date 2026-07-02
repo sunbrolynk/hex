@@ -17,13 +17,24 @@ RecipientKind = Literal["email", "phone", "label"]
 
 MAX_LEN = 320  # RFC 5321 email ceiling; also caps phone/label
 
-# Control/separator codepoints that must never appear: C0 (incl. CR/LF/NUL), DEL, C1, and the
-# Unicode line/paragraph separators. Everything else (accents, emoji, scripts) is allowed in labels.
-_FORBIDDEN = frozenset({0x7F, 0x2028, 0x2029})
+# Codepoints that must never appear: C0 (incl. CR/LF/NUL), DEL, C1, the Unicode line/paragraph
+# separators, and the invisible/BiDi-control chars (zero-width, LRM/RLM, embeddings, overrides,
+# isolates, BOM) that enable visual spoofing of an owner-facing label. Everything else — accents,
+# emoji, RTL *letters* — is allowed; only the explicit control chars are blocked.
+_FORBIDDEN = frozenset({0x7F, 0x2028, 0x2029, 0xFEFF})
 
 
 def _has_control(value: str) -> bool:
-    return any(cp < 0x20 or 0x80 <= cp <= 0x9F or cp in _FORBIDDEN for cp in map(ord, value))
+    return any(
+        cp < 0x20
+        or 0x80 <= cp <= 0x9F
+        or 0x200B <= cp <= 0x200F  # zero-width space/joiners + LRM/RLM
+        or 0x202A <= cp <= 0x202E  # BiDi embeddings + overrides
+        or 0x2060 <= cp <= 0x2064  # word joiner + invisible operators
+        or 0x2066 <= cp <= 0x2069  # BiDi isolates
+        or cp in _FORBIDDEN
+        for cp in map(ord, value)
+    )
 
 
 def normalize_recipient(kind: RecipientKind, value: str) -> str:
